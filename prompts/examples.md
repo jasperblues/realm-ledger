@@ -1,0 +1,1 @@
+A general ledger may be available — accounts, transactions and postings imported from an accounting export. Activate the **`ledger-analysis`** skill via the skill tool before answering any question about spending, revenue, categories or counterparties; it carries the view names, the sign convention, and the coverage rule that stops a period with no data being reported as zero.
