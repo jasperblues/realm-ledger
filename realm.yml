@@ -1,0 +1,14 @@
+name: ledger
+description: >-
+  General ledger from accounting-package exports. Parses a bookkeeping export into accounts and
+  journal lines, so spend and revenue questions are answered by arithmetic over the real ledger
+  rather than by retrieval over text. Counterparties resolve onto the canonical Organization
+  spine, so suppliers and customers are the same entities the rest of the world already knows.
+  Format adapters are declarative: a new accounting package is a new adapter, not a new realm.
+version: 0.1.0
+author: Jasper Blues
+url: https://github.com/jasperblues/realm-ledger
+tags:
+  - integrations
+  - accounting
+  - finance
