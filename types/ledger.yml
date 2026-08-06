@@ -1,0 +1,130 @@
+# Graph shape for an imported general ledger.
+#
+# Persisted entities, not virtual joins. Virtual cypher earns its keep over large, volatile,
+# externally-owned collections; a ledger export is the opposite — bounded (a few thousand rows a
+# year), immutable once the period closes, and already on disk. It also runs into the anchoring
+# rule: "what did I spend across every category" has no bound anchor to traverse from, so the
+# most useful questions would be rejected at plan time.
+#
+# Three nodes, because a journal line alone cannot answer the interesting questions. A sale's
+# customer is named on the receivable line while its revenue sits on the income line, so
+# something has to hold them together — that is LedgerTransaction, and it is why "revenue by
+# customer" is a traversal here rather than a string-matching exercise.
+
+- name: LedgerAccount
+  description: >-
+    An account in the chart of accounts, as the source classifies it. The spine of every spend
+    and revenue question: an account is what turns a payment into a category.
+  properties:
+    key:
+      description: >-
+        Identity. Composite of source, entity and code, because an account code is only unique
+        within one company's books and a user may keep more than one set.
+      metadata:
+        identity: "true"
+    code:
+      description: "The source's account code, e.g. 6-4390. How postings reference it."
+    name:
+      description: "Account name as the bookkeeper wrote it, e.g. 'Staff Amenities'."
+    accountType:
+      description: >-
+        asset, liability, equity, income, expense, cost-of-sales, other-income, other-expense,
+        or unknown. Taken from the source where it states one; never inferred from the name.
+    parentCode:
+      description: "Parent account code where the source models a hierarchy. Absent when flat."
+    taxCode:
+      description: "Tax treatment as the source records it, e.g. GST, FRE, N-T. Not interpreted."
+    header:
+      description: "True/false. A rollup account that cannot be posted to."
+    active:
+      description: "True/false. False for an account the bookkeeper has retired."
+    entity:
+      description: "The company whose books this belongs to, as named by the source."
+    source:
+      description: "Adapter that produced it, e.g. myob-ceedata."
+
+- name: LedgerTransaction
+  description: >-
+    One accounting event, holding the postings that balance against each other. Exists because
+    the parts of a transaction carry different facts: the counterparty is named on one line and
+    the amount that matters is on another.
+  properties:
+    key:
+      description: "Identity. Composite of source, entity and the source's transaction reference."
+      metadata:
+        identity: "true"
+    reference:
+      description: "The source's own grouping reference for the postings."
+    date:
+      description: "Transaction date, ISO yyyy-mm-dd."
+    narration:
+      description: >-
+        The source's description, verbatim — usually naming a counterparty, sometimes a bank
+        feed's raw merchant string. Kept unparsed because it is evidence: interpreting it is a
+        separate, fallible step that must never overwrite what the books say.
+    counterpartyName:
+      description: >-
+        Counterparty as read from the narration, when one could be read confidently. A
+        best-effort reading of free text, so it is recorded alongside the narration rather than
+        instead of it, and is absent rather than guessed.
+      metadata:
+        relationship: TRANSACTED_WITH
+        target: Organization
+        matchBy: name
+    entity:
+      description: "The company whose books this belongs to."
+    source:
+      description: "Adapter that produced it."
+
+- name: LedgerEntry
+  description: >-
+    A single posting: an amount against one account, within one transaction. The grain every
+    total is computed from.
+  properties:
+    key:
+      description: "Identity. Composite of source, entity, transaction reference and line id."
+      metadata:
+        identity: "true"
+    amount:
+      description: >-
+        Signed, in the books' own currency and the source's own convention: positive debit,
+        negative credit. Never rounded or absolute-valued on import — the sign is what makes
+        income and expenditure distinguishable.
+    date:
+      description: "Posting date, ISO yyyy-mm-dd. Denormalised from the transaction for filtering."
+    accountCode:
+      description: "The account posted to. Resolved to a LedgerAccount by POSTED_TO."
+    description:
+      description: "The posting's own narration, verbatim."
+    entity:
+      description: "The company whose books this belongs to."
+    source:
+      description: "Adapter that produced it."
+
+- name: LedgerCoverage
+  description: >-
+    Which periods have actually been imported, per company and source. Consulted before any
+    total is reported: a question about a period outside it must be answered "no data for that
+    period", never zero. A zero looks like a fact, and a wrong fact about money is worse than an
+    admitted gap.
+  properties:
+    key:
+      description: "Identity. Composite of source, entity and the covered window."
+      metadata:
+        identity: "true"
+    entity:
+      description: "The company whose books these are."
+    fromDate:
+      description: "First date covered, ISO yyyy-mm-dd, inclusive."
+    toDate:
+      description: "Last date covered, ISO yyyy-mm-dd, inclusive."
+    source:
+      description: "Adapter that produced it."
+    importedAt:
+      description: "When this window was last imported, ISO instant."
+    lineCount:
+      description: "Whole number of postings imported for this window."
+    rejectedCount:
+      description: >-
+        Postings the import could not read. Recorded so a total can be qualified honestly —
+        "2,338 of 2,340 lines" is a different claim from "2,340 lines".

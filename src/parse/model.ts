@@ -93,6 +93,41 @@ export interface Ledger {
 export interface ParseResult {
   ledger: Ledger;
   rejected: RejectedRow[];
+  /**
+   * Questions only the user can settle.
+   *
+   * Separate from [rejected] because these are not faults. A rejected row is something the
+   * file got wrong; a clarification is something the file simply does not say, where
+   * guessing is cheap to do and expensive to be wrong about. The parser stays pure and
+   * merely reports them — asking belongs to whatever is driving the import, which is the
+   * only layer that can hold a conversation.
+   */
+  clarifications: Clarification[];
+}
+
+/**
+ * Something the import should ask about rather than assume.
+ *
+ * Carries what the parser will do if nobody answers, because an unanswered question must
+ * still leave a usable result — an import that blocks forever on a prompt nobody sees is
+ * worse than one that proceeds on a stated assumption.
+ */
+export interface Clarification {
+  /** Stable id, so an answer can be matched back and remembered. */
+  id: string;
+  question: string;
+  options: ClarificationOption[];
+  /** Why we cannot settle it from the file. */
+  reason: string;
+  /** What was assumed in the absence of an answer, in plain terms. */
+  assumed: string;
+}
+
+export interface ClarificationOption {
+  id: string;
+  label: string;
+  /** What choosing this would mean for the data, so the choice is informed. */
+  consequence: string;
 }
 
 export interface RejectedRow {

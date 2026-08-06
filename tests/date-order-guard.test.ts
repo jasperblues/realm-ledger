@@ -20,11 +20,38 @@ describe("date-order guard", () => {
     expect(rejected).toHaveLength(0);
   });
 
-  it("stays quiet when the file cannot settle the question either way", () => {
-    // All dates in the first twelve days of a month. Reading them day-first is our declared
-    // convention and no evidence contradicts it, so there is nothing to report.
-    const { rejected } = parseCeeData(withDates(["01/02/26", "03/04/26"]));
+  it("asks the user when the file cannot settle the question either way", () => {
+    // All dates in the first twelve days of a month, so nothing in the file distinguishes
+    // the readings. Not a fault in the file — it is simply silent — so this is a question,
+    // not a rejection.
+    const { rejected, clarifications } = parseCeeData(withDates(["01/02/26", "03/04/26"]));
+
     expect(rejected).toHaveLength(0);
+    expect(clarifications).toHaveLength(1);
+    expect(clarifications[0].id).toBe("date-order");
+    expect(clarifications[0].options.map((o) => o.id)).toEqual(["day-first", "month-first"]);
+  });
+
+  it("the question states what was assumed, so an unanswered import is still usable", () => {
+    // An import that blocks forever on a prompt nobody sees is worse than one that
+    // proceeds on a stated assumption.
+    const { ledger, clarifications } = parseCeeData(withDates(["01/02/26", "03/04/26"]));
+
+    expect(clarifications[0].assumed).toContain("day-first");
+    expect(ledger.lines).toHaveLength(2);
+    expect(ledger.lines[0].date).toBe("2026-02-01");
+  });
+
+  it("each option says what choosing it would mean for the data", () => {
+    const { clarifications } = parseCeeData(withDates(["01/02/26", "03/04/26"]));
+    const monthFirst = clarifications[0].options.find((o) => o.id === "month-first");
+
+    expect(monthFirst?.consequence).toContain("different month");
+  });
+
+  it("does not ask when the file answers the question itself", () => {
+    const { clarifications } = parseCeeData(withDates(["30/06/26", "03/07/25"]));
+    expect(clarifications).toHaveLength(0);
   });
 
   it("objects when the file is evidently month-first", () => {

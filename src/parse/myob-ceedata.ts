@@ -1,6 +1,7 @@
 import type {
   Account,
   AccountType,
+  Clarification,
   JournalLine,
   ParseResult,
   RejectedRow,
@@ -37,7 +38,7 @@ export function parseCeeData(text: string): ParseResult {
     .map((raw, i) => parseAccount(raw, i + 1, rejected))
     .filter((a): a is Account => a !== null);
 
-  checkDateOrder(
+  const clarifications = checkDateOrder(
     lines.filter((l) => l.startsWith("TR~")).map((l) => l.split("~")[2] ?? ""),
     rejected,
   );
@@ -58,6 +59,7 @@ export function parseCeeData(text: string): ParseResult {
       lines: journal,
     },
     rejected,
+    clarifications,
   };
 }
 
@@ -177,12 +179,16 @@ export function toIsoDate(value: string): string | null {
 /**
  * Check the file against the convention we claim it uses.
  *
- * Cheap insurance against a format change or a mis-set locale: if a file turns out to carry
- * month-first dates, reading it day-first would move transactions between periods without
- * a single row failing to parse. Better to say so than to import silently wrong books.
+ * Three outcomes, and they are not the same thing. Evidence AGAINST our convention is a
+ * fault in the file and goes to [RejectedRow]. Evidence that the file cannot settle the
+ * question is not a fault at all — the file is simply silent — and becomes a clarification
+ * for the user, because reading dates the wrong way round is the only failure here with no
+ * symptom: every row parses, the totals balance, and transactions land in the wrong
+ * periods. Agreement means say nothing.
  */
-function checkDateOrder(dates: readonly string[], rejected: RejectedRow[]): void {
+function checkDateOrder(dates: readonly string[], rejected: RejectedRow[]): Clarification[] {
   const inferred = inferOrder(dates);
+
   if (inferred === "contradictory") {
     rejected.push({
       line: 0,
@@ -191,9 +197,19 @@ function checkDateOrder(dates: readonly string[], rejected: RejectedRow[]): void
         "in the wrong period whichever reading is used",
       raw: "",
     });
-    return;
+    return [];
   }
-  if (inferred !== "day-first" && inferred !== "ambiguous" && inferred !== "none") {
+
+  if (inferred === "ambiguous") {
+    // Every date falls in the first twelve days of a month, so nothing in the file
+    // distinguishes the two readings. Common in short exports.
+    return [dateOrderQuestion(
+      "every date in this file falls in the first twelve days of a month, so the file " +
+      "itself does not reveal which order it uses",
+    )];
+  }
+
+  if (inferred !== "day-first" && inferred !== "none") {
     rejected.push({
       line: 0,
       reason:
@@ -202,6 +218,29 @@ function checkDateOrder(dates: readonly string[], rejected: RejectedRow[]): void
       raw: "",
     });
   }
+
+  return [];
+}
+
+function dateOrderQuestion(reason: string): Clarification {
+  return {
+    id: "date-order",
+    question: "Are the dates in this file day-first or month-first?",
+    reason,
+    assumed: "read as day-first, which is what this export normally uses",
+    options: [
+      {
+        id: "day-first",
+        label: "Day first (31/12/25)",
+        consequence: "what MYOB normally writes; transactions keep the periods you expect",
+      },
+      {
+        id: "month-first",
+        label: "Month first (12/31/25)",
+        consequence: "some transactions move to a different month, and possibly a different quarter",
+      },
+    ],
+  };
 }
 
 /** MYOB's account-number convention. A hint only — see the note in [parseAccount]. */
