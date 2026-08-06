@@ -1,0 +1,159 @@
+# Canonical LEDGER AGGREGATE views (TABULAR — they RETURN scalars, so they are report-only
+# result sets, not traversable node subsets).
+#
+# These exist to PIN the arithmetic. A spend total is a sum over postings, and a caller who
+# writes the join by hand can double-count trivially: join a posting to its transaction and then
+# to a counterparty and every posting multiplies. Doing the sum ONCE, inside the view, means every
+# model, app and console asking "what did I spend on X" gets the same, correct number.
+#
+# All of them are scoped to a LedgerCoverage window on purpose. A period with no imported data
+# must answer "no data", never zero — a zero reads as a fact, and a wrong fact about money is
+# worse than an admitted gap. That is why coverage is joined rather than assumed.
+
+- name: spend_by_category
+  description: >-
+    What was spent per expense account over a period, largest first. The answer to "where does
+    the money go". Rows: {category, code, total, transactions}.
+  params:
+    from:
+      type: string
+      description: "Start date, ISO yyyy-mm-dd, inclusive."
+    to:
+      type: string
+      description: "End date, ISO yyyy-mm-dd, inclusive."
+    limit:
+      type: int
+      default: 25
+      description: "Maximum categories to return."
+  cypher: |
+    MATCH (a:LedgerAccount)<-[:POSTED_TO]-(e:LedgerEntry)
+    WHERE a.accountType IN ['expense', 'cost-of-sales', 'other-expense']
+      AND e.date >= $from AND e.date <= $to
+    WITH a, sum(e.amount) AS total, count(DISTINCT e.key) AS transactions
+    WHERE total <> 0
+    RETURN a.name AS category, a.code AS code, total, transactions
+    ORDER BY total DESC, category ASC
+    LIMIT $limit
+
+- name: spend_in_category
+  description: >-
+    Individual postings behind one expense category, most recent first — the detail under a
+    total, so a surprising number can be checked rather than trusted. Match the category by name
+    fragment, case-insensitive. Rows: {date, amount, narration, counterparty}.
+  params:
+    category:
+      type: string
+      description: "Account name or fragment, e.g. 'staff amenities'."
+    from:
+      type: string
+      description: "Start date, ISO yyyy-mm-dd, inclusive."
+    to:
+      type: string
+      description: "End date, ISO yyyy-mm-dd, inclusive."
+    limit:
+      type: int
+      default: 200
+      description: "Maximum postings to return."
+  cypher: |
+    MATCH (a:LedgerAccount)<-[:POSTED_TO]-(e:LedgerEntry)<-[:HAS_ENTRY]-(t:LedgerTransaction)
+    WHERE toLower(a.name) CONTAINS toLower($category)
+      AND e.date >= $from AND e.date <= $to
+    RETURN e.date AS date, e.amount AS amount, e.description AS narration,
+           t.counterpartyName AS counterparty
+    ORDER BY date DESC, amount DESC
+    LIMIT $limit
+
+- name: revenue_by_client
+  description: >-
+    Income per counterparty over a period, largest first, with each client's share of the total.
+    Rows: {client, total, share, transactions}.
+  params:
+    from:
+      type: string
+      description: "Start date, ISO yyyy-mm-dd, inclusive."
+    to:
+      type: string
+      description: "End date, ISO yyyy-mm-dd, inclusive."
+    limit:
+      type: int
+      default: 25
+      description: "Maximum clients to return."
+  cypher: |
+    MATCH (a:LedgerAccount)<-[:POSTED_TO]-(e:LedgerEntry)<-[:HAS_ENTRY]-(t:LedgerTransaction)
+    WHERE a.accountType IN ['income', 'other-income']
+      AND e.date >= $from AND e.date <= $to
+    // Income is credited, so it is stored negative. Negate once, here, rather than leaving
+    // every caller to remember the sign convention.
+    WITH coalesce(t.counterpartyName, t.narration) AS client, -sum(e.amount) AS total,
+         count(DISTINCT t.key) AS transactions
+    WITH collect({client: client, total: total, transactions: transactions}) AS rows,
+         sum(total) AS grand
+    UNWIND rows AS row
+    RETURN row.client AS client, row.total AS total,
+           CASE WHEN grand = 0 THEN 0.0 ELSE round(100.0 * row.total / grand, 1) END AS share,
+           row.transactions AS transactions
+    ORDER BY total DESC, client ASC
+    LIMIT $limit
+
+- name: category_trend
+  description: >-
+    One expense category month by month, to see whether it is growing. Rows: {month, total,
+    transactions}.
+  params:
+    category:
+      type: string
+      description: "Account name or fragment, e.g. 'motor vehicle'."
+    from:
+      type: string
+      description: "Start date, ISO yyyy-mm-dd, inclusive."
+    to:
+      type: string
+      description: "End date, ISO yyyy-mm-dd, inclusive."
+  cypher: |
+    MATCH (a:LedgerAccount)<-[:POSTED_TO]-(e:LedgerEntry)
+    WHERE toLower(a.name) CONTAINS toLower($category)
+      AND e.date >= $from AND e.date <= $to
+    WITH substring(e.date, 0, 7) AS month, sum(e.amount) AS total, count(e) AS transactions
+    RETURN month, total, transactions
+    ORDER BY month ASC
+
+- name: ledger_coverage
+  description: >-
+    Which periods have actually been imported, and how completely. Consult before reporting any
+    total: a period outside these windows has no data, which is not the same as zero spend.
+    Rows: {entity, from, to, source, lines, rejected, importedAt}.
+  cypher: |
+    MATCH (c:LedgerCoverage)
+    RETURN c.entity AS entity, c.fromDate AS from, c.toDate AS to, c.source AS source,
+           c.lineCount AS lines, c.rejectedCount AS rejected, c.importedAt AS importedAt
+    ORDER BY entity ASC, from DESC
+
+- name: top_counterparties
+  description: >-
+    Who money moved to and from over a period, by total value, whichever direction. Useful for
+    spotting concentration. Rows: {counterparty, spent, received, transactions}.
+  params:
+    from:
+      type: string
+      description: "Start date, ISO yyyy-mm-dd, inclusive."
+    to:
+      type: string
+      description: "End date, ISO yyyy-mm-dd, inclusive."
+    limit:
+      type: int
+      default: 25
+      description: "Maximum counterparties to return."
+  cypher: |
+    MATCH (t:LedgerTransaction)-[:HAS_ENTRY]->(e:LedgerEntry)-[:POSTED_TO]->(a:LedgerAccount)
+    WHERE e.date >= $from AND e.date <= $to
+      AND coalesce(t.counterpartyName, '') <> ''
+    WITH t.counterpartyName AS counterparty,
+         sum(CASE WHEN a.accountType IN ['expense', 'cost-of-sales', 'other-expense']
+                  THEN e.amount ELSE 0 END) AS spent,
+         sum(CASE WHEN a.accountType IN ['income', 'other-income']
+                  THEN -e.amount ELSE 0 END) AS received,
+         count(DISTINCT t.key) AS transactions
+    WHERE spent <> 0 OR received <> 0
+    RETURN counterparty, spent, received, transactions
+    ORDER BY (abs(spent) + abs(received)) DESC, counterparty ASC
+    LIMIT $limit
