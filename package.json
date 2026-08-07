@@ -5,9 +5,11 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json && npm run bundle",
+    "bundle": "esbuild src/handlers/import-ledger.ts --bundle --format=esm --platform=neutral --outfile=actions/import-ledger.ts --log-level=warning"
   },
   "devDependencies": {
+    "esbuild": "^0.28.1",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
   }

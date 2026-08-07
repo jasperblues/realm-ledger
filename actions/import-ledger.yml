@@ -1,0 +1,23 @@
+# Wakes when a file is attached to a conversation and imports it if it is a ledger export.
+#
+# `module:` names a BUNDLED file, not the handler source. The spec loader inlines exactly one
+# file, so a handler cannot import its own parser at runtime; `npm run build` bundles
+# `src/handlers/import-ledger.ts` and everything it imports into `actions/import-ledger.ts`.
+# The parser therefore stays in `src/parse`, where it is tested, rather than being copied here.
+#
+# NO payload narrowing here, deliberately. HandlerMatch supports mimeTypes/signature/filename
+# criteria, but the host builds a handler's match from `signalType` alone, so those keys would be
+# accepted by the YAML parser and then silently ignored — this handler would wake for every
+# attachment while appearing configured not to. Config that lies is worse than config that is
+# absent, so the handler does its own content check instead: it reads a bounded prefix via
+# `gateway.attachment.head` and returns immediately unless it sees the CeeData signature.
+# When the host wires payload criteria through, they belong here.
+- stepType: com.embabel.world.plan.spec.TypeScriptActionSpec
+  name: import-ledger
+  description: >-
+    Import a general ledger export attached to the conversation — MYOB "Data for Accountant"
+    (CeeData) — into accounts, transactions and postings, so spending and revenue questions are
+    answered by arithmetic over the real ledger.
+  signalType: AttachmentReceivedSignal
+  module: import-ledger.ts
+  autonomous: false
