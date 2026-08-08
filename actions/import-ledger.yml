@@ -23,4 +23,8 @@ description: >-
 # cleanly and simply never matches.
 signalType: attachment.received
 module: import-ledger.ts
-autonomous: false
+# TRUE because this handler WRITES. The runtime passes dryRun = !autonomous, so a
+# non-autonomous handler runs and silently discards its writes — cautious-looking and useless.
+# The safety is elsewhere and better: a write-capable realm action defaults to OFF until the
+# user adopts it (EnabledActionStore), so it cannot import anything until explicitly enabled.
+autonomous: true
