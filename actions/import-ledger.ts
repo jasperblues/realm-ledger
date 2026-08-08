@@ -237,21 +237,22 @@ function truncate(raw) {
 
 // src/handlers/import-ledger.ts
 async function importLedger() {
+  const { storageKey, filename } = signal.properties;
   const head = await gateway.attachment.head({
-    storageKey: signal.storageKey,
+    storageKey,
     maxChars: SIGNATURE.length + 64
   });
   if (!claimsCeeData(head)) {
-    return `Not a CeeData export (${signal.filename}); leaving it alone.`;
+    return `Not a CeeData export (${filename}); leaving it alone.`;
   }
-  const text = await gateway.attachment.read({ storageKey: signal.storageKey });
+  const text = await gateway.attachment.read({ storageKey });
   const result = parseCeeData(text);
   const { ledger, rejected, clarifications } = result;
   if (!ledger.coverage.from || !ledger.coverage.to) {
-    return `${signal.filename} does not declare which period it covers, so it cannot be imported safely \u2014 a later export of the same period would double the totals rather than replace them.`;
+    return `${filename} does not declare which period it covers, so it cannot be imported safely \u2014 a later export of the same period would double the totals rather than replace them.`;
   }
   await writeLedger(ledger);
-  return summarise(signal.filename, result);
+  return summarise(filename, result);
 }
 async function writeLedger(ledger) {
   const { entity, from, to, source } = ledger.coverage;

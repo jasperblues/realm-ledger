@@ -18,14 +18,22 @@ function setup(fileContent: string, filename = "ledger.txt") {
   const queries: Query[] = [];
   const reads: string[] = [];
 
+  // Mirrors the host's SignalEnvelope: only wire fields are lifted, everything type-specific
+  // sits under `properties`. Getting this wrong in the fake is how the real bug survived tests.
   (globalThis as any).signal = {
-    attachmentId: "att-1",
-    filename,
-    mimeType: "text/plain",
-    sizeBytes: fileContent.length,
-    storageKey: `chat-attachments/ben/${filename}`,
-    caption: "",
-    conversationId: "conv-1",
+    id: "sig-1",
+    typeName: "attachment.received",
+    subject: `Attachment received: ${filename}`,
+    occurredAt: "2026-08-08T04:18:59Z",
+    properties: {
+      attachmentId: "att-1",
+      filename,
+      mimeType: "text/plain",
+      sizeBytes: fileContent.length,
+      storageKey: `chat-attachments/ben/${filename}`,
+      caption: "",
+      conversationId: "conv-1",
+    },
   };
 
   (globalThis as any).gateway = {
@@ -64,7 +72,9 @@ const LEDGER = [
 ].join("\n");
 
 describe("claiming", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("imports a CeeData export", async () => {
     const { queries, reads } = setup(LEDGER);
@@ -101,7 +111,9 @@ describe("claiming", () => {
 });
 
 describe("writing", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("clears the declared window before inserting", async () => {
     // Replace-by-window is what makes a re-export idempotent: without the delete, importing the
@@ -153,7 +165,9 @@ describe("writing", () => {
 });
 
 describe("refusing to import unsafely", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("refuses a file that does not declare its period", async () => {
     // Without a window an import cannot be superseded, so a later export of the same period
@@ -169,7 +183,9 @@ describe("refusing to import unsafely", () => {
 });
 
 describe("reporting", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("reports rows it could not read", async () => {
     // "2,338 of 2,340" is a different claim from "2,340".

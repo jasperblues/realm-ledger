@@ -9,6 +9,7 @@
     "bundle": "esbuild src/handlers/import-ledger.entry.ts --bundle --format=esm --platform=neutral --outfile=actions/import-ledger.ts --log-level=warning"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "esbuild": "^0.28.1",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"

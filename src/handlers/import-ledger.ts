@@ -14,15 +14,28 @@ import type { Ledger, ParseResult } from "../parse/model";
  * and `npm run build` bundles this entry point into `actions/import-ledger.ts`.
  */
 
-// The handler runtime provides `signal` and `gateway` in scope.
+/**
+ * The runtime provides `signal` and `gateway` in scope.
+ *
+ * Type-specific fields live under `properties`, not at the top level: the host wraps a signal in
+ * an envelope where only wire fields (id, typeName, subject, occurredAt, source) are lifted, and
+ * everything else is a property. Reading `signal.storageKey` yields undefined, which reaches the
+ * gateway as a missing parameter and reports itself as a gateway error rather than a signal one.
+ */
 declare const signal: {
-  attachmentId: string;
-  filename: string;
-  mimeType: string;
-  sizeBytes: number;
-  storageKey: string;
-  caption: string;
-  conversationId: string;
+  id: string;
+  typeName: string;
+  subject: string;
+  occurredAt: string;
+  properties: {
+    attachmentId: string;
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+    storageKey: string;
+    caption: string;
+    conversationId: string;
+  };
 };
 
 declare const gateway: {
@@ -41,15 +54,17 @@ declare const gateway: {
 export default async function importLedger(): Promise<string> {
   // Cheap confirmation first. `head` reads a bounded prefix, so a file that is not ours costs a
   // few hundred characters rather than the whole export.
+  const { storageKey, filename } = signal.properties;
+
   const head = await gateway.attachment.head({
-    storageKey: signal.storageKey,
+    storageKey,
     maxChars: SIGNATURE.length + 64,
   });
   if (!claimsCeeData(head)) {
-    return `Not a CeeData export (${signal.filename}); leaving it alone.`;
+    return `Not a CeeData export (${filename}); leaving it alone.`;
   }
 
-  const text = await gateway.attachment.read({ storageKey: signal.storageKey });
+  const text = await gateway.attachment.read({ storageKey });
   const result = parseCeeData(text);
   const { ledger, rejected, clarifications } = result;
 
@@ -57,14 +72,14 @@ export default async function importLedger(): Promise<string> {
     // Without a declared window an import cannot safely supersede an earlier one, so refuse
     // rather than write data that can never be cleanly replaced.
     return (
-      `${signal.filename} does not declare which period it covers, so it cannot be imported ` +
+      `${filename} does not declare which period it covers, so it cannot be imported ` +
       `safely — a later export of the same period would double the totals rather than replace them.`
     );
   }
 
   await writeLedger(ledger);
 
-  return summarise(signal.filename, result);
+  return summarise(filename, result);
 }
 
 /**
