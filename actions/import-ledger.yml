@@ -12,12 +12,12 @@
 # absent, so the handler does its own content check instead: it reads a bounded prefix via
 # `gateway.attachment.head` and returns immediately unless it sees the CeeData signature.
 # When the host wires payload criteria through, they belong here.
-- stepType: com.embabel.world.plan.spec.TypeScriptActionSpec
-  name: import-ledger
-  description: >-
-    Import a general ledger export attached to the conversation — MYOB "Data for Accountant"
-    (CeeData) — into accounts, transactions and postings, so spending and revenue questions are
-    answered by arithmetic over the real ledger.
-  signalType: AttachmentReceivedSignal
-  module: import-ledger.ts
-  autonomous: false
+stepType: com.embabel.world.plan.spec.TypeScriptActionSpec
+name: import-ledger
+description: >-
+  Import a general ledger export attached to the conversation — MYOB "Data for Accountant"
+  (CeeData) — into accounts, transactions and postings, so spending and revenue questions are
+  answered by arithmetic over the real ledger.
+signalType: AttachmentReceivedSignal
+module: import-ledger.ts
+autonomous: false
