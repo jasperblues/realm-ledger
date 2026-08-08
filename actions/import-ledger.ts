@@ -255,115 +255,63 @@ async function importLedger() {
   return summarise(filename, result);
 }
 async function writeLedger(ledger) {
-  const { entity, from, to, source } = ledger.coverage;
-  await gateway.kg.query({
-    cypher: `
-      MATCH (e:LedgerEntry)
-      WHERE e.entity = $entity AND e.source = $source AND e.date >= $from AND e.date <= $to
-      DETACH DELETE e
-    `,
-    params: { entity, source, from, to }
-  });
-  await gateway.kg.query({
-    cypher: `
-      MATCH (t:LedgerTransaction)
-      WHERE t.entity = $entity AND t.source = $source AND t.date >= $from AND t.date <= $to
-      DETACH DELETE t
-    `,
-    params: { entity, source, from, to }
-  });
-  for (const chunk of chunked(ledger.accounts, 200)) {
-    await gateway.kg.query({
-      cypher: `
-        UNWIND $rows AS row
-        MERGE (a:LedgerAccount {key: row.key})
-        SET a.code = row.code, a.name = row.name, a.accountType = row.accountType,
-            a.parentCode = row.parentCode, a.taxCode = row.taxCode,
-            a.header = row.header, a.active = row.active,
-            a.entity = row.entity, a.source = row.source
-      `,
-      params: {
-        rows: chunk.map((a) => ({
-          key: `${source}:${entity}:${a.code}`,
-          code: a.code,
-          name: a.name,
-          accountType: a.type,
-          parentCode: a.parent ?? null,
-          taxCode: a.taxCode ?? null,
-          header: a.header,
-          active: a.active,
-          entity,
-          source
-        }))
-      }
-    });
-  }
-  const byRef = groupByRef(ledger);
-  for (const chunk of chunked([...byRef.values()], 200)) {
-    await gateway.kg.query({
-      cypher: `
-        UNWIND $rows AS row
-        MERGE (t:LedgerTransaction {key: row.key})
-        SET t.reference = row.reference, t.date = row.date, t.narration = row.narration,
-            t.entity = row.entity, t.source = row.source
-      `,
-      params: {
-        rows: chunk.map((t) => ({
-          key: `${source}:${entity}:${t.reference}`,
-          reference: t.reference,
-          date: t.date,
-          narration: t.narration,
-          entity,
-          source
-        }))
-      }
-    });
-  }
-  for (const chunk of chunked(ledger.lines, 200)) {
-    await gateway.kg.query({
-      cypher: `
-        UNWIND $rows AS row
-        MERGE (e:LedgerEntry {key: row.key})
-        SET e.amount = row.amount, e.date = row.date, e.accountCode = row.accountCode,
-            e.description = row.description, e.entity = row.entity, e.source = row.source
-        WITH e, row
-        MATCH (t:LedgerTransaction {key: row.transactionKey})
-        MERGE (t)-[:HAS_ENTRY]->(e)
-        WITH e, row
-        MATCH (a:LedgerAccount {key: row.accountKey})
-        MERGE (e)-[:POSTED_TO]->(a)
-      `,
-      params: {
-        rows: chunk.map((l, i) => ({
-          key: `${source}:${entity}:${l.transactionRef}:${l.lineId ?? i}`,
-          transactionKey: `${source}:${entity}:${l.transactionRef}`,
-          accountKey: `${source}:${entity}:${l.accountCode}`,
-          amount: l.amount,
-          date: l.date,
-          accountCode: l.accountCode,
-          description: l.description,
-          entity,
-          source
-        }))
-      }
-    });
-  }
-  await gateway.kg.query({
-    cypher: `
-      MERGE (c:LedgerCoverage {key: $key})
-      SET c.entity = $entity, c.fromDate = $from, c.toDate = $to, c.source = $source,
-          c.importedAt = $importedAt, c.lineCount = $lineCount, c.rejectedCount = $rejectedCount
-    `,
-    params: {
-      key: `${source}:${entity}:${from}:${to}`,
+  const { entity, source } = ledger.coverage;
+  await inBatches(ledger.accounts, (a) => ({
+    // Keyed on the account code within one company's books: a code is unique per entity, and a
+    // user may keep more than one set.
+    key: `${source}:${entity}:${a.code}`,
+    title: a.name,
+    code: a.code,
+    accountType: a.type,
+    parentCode: a.parent ?? null,
+    taxCode: a.taxCode ?? null,
+    header: a.header,
+    active: a.active,
+    entity,
+    source
+  }), "LedgerAccount");
+  const transactions = [...groupByRef(ledger).values()];
+  await inBatches(transactions, (t) => ({
+    key: `${source}:${entity}:${t.reference}`,
+    title: t.narration,
+    reference: t.reference,
+    date: t.date,
+    narration: t.narration,
+    entity,
+    source
+  }), "LedgerTransaction");
+  await inBatches(postingRows(ledger), (r) => r, "LedgerEntry");
+  await gateway.repository.createEntries({
+    type: "LedgerCoverage",
+    rows: [{
+      key: `${source}:${entity}:${ledger.coverage.from}:${ledger.coverage.to}`,
+      title: `${entity} ${ledger.coverage.from} to ${ledger.coverage.to}`,
       entity,
-      from,
-      to,
+      fromDate: ledger.coverage.from,
+      toDate: ledger.coverage.to,
       source,
       importedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      lineCount: ledger.lines.length,
-      rejectedCount: 0
-    }
+      lineCount: ledger.lines.length
+    }]
+  });
+}
+function postingRows(ledger) {
+  const { entity, source } = ledger.coverage;
+  const ordinals = /* @__PURE__ */ new Map();
+  return ledger.lines.map((l) => {
+    const seen = ordinals.get(l.transactionRef) ?? 0;
+    ordinals.set(l.transactionRef, seen + 1);
+    return {
+      key: `${source}:${entity}:${l.transactionRef}:${seen}`,
+      title: l.description || `${l.accountCode} ${l.amount}`,
+      amount: l.amount,
+      date: l.date,
+      accountCode: l.accountCode,
+      transactionRef: l.transactionRef,
+      description: l.description,
+      entity,
+      source
+    };
   });
 }
 function groupByRef(ledger) {
@@ -379,6 +327,12 @@ function groupByRef(ledger) {
   }
   return byRef;
 }
+async function inBatches(items, toRow, type) {
+  for (const chunk of chunked(items, BATCH_SIZE)) {
+    await gateway.repository.createEntries({ type, rows: chunk.map(toRow) });
+  }
+}
+var BATCH_SIZE = 200;
 function chunked(items, size) {
   const out = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));

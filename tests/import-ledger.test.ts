@@ -9,13 +9,13 @@ import importLedger from "../src/handlers/import-ledger";
  * how it actually runs: the bundled source is evaluated with those names in scope.
  */
 
-interface Query {
-  cypher: string;
-  params?: Record<string, unknown>;
+interface Write {
+  type: string;
+  rows: Record<string, unknown>[];
 }
 
 function setup(fileContent: string, filename = "ledger.txt") {
-  const queries: Query[] = [];
+  const writes: Write[] = [];
   const reads: string[] = [];
 
   // Mirrors the host's SignalEnvelope: only wire fields are lifted, everything type-specific
@@ -46,15 +46,15 @@ function setup(fileContent: string, filename = "ledger.txt") {
         return fileContent;
       }),
     },
-    kg: {
-      query: vi.fn(async (q: Query) => {
-        queries.push(q);
-        return { rows: [], warnings: [] };
+    repository: {
+      createEntries: vi.fn(async (w: Write) => {
+        writes.push(w);
+        return `Created or updated ${w.rows.length} ${w.type} entries.`;
       }),
     },
   };
 
-  return { queries, reads };
+  return { writes, reads };
 }
 
 /**
@@ -77,36 +77,36 @@ describe("claiming", () => {
   });
 
   it("imports a CeeData export", async () => {
-    const { queries, reads } = setup(LEDGER);
+    const { writes, reads } = setup(LEDGER);
 
     const message = await runHandler();
 
     expect(reads).toHaveLength(1);
     expect(message).toContain("Acme Pty Ltd");
     expect(message).toContain("2025-07-01");
-    expect(queries.length).toBeGreaterThan(0);
+    expect(writes.length).toBeGreaterThan(0);
   });
 
   it("declines anything without the signature, without reading the file", async () => {
     // The whole point of head(): a file that is not ours costs a few hundred characters, not
     // the whole export.
-    const { queries, reads } = setup("milk, bread, coffee", "shopping.txt");
+    const { writes, reads } = setup("milk, bread, coffee", "shopping.txt");
 
     const message = await runHandler();
 
     expect(message).toContain("Not a CeeData export");
     expect(reads).toHaveLength(0);
-    expect(queries).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 
   it("re-checks content even though the host pre-filtered", async () => {
     // A pre-filter is a cheap exclusion, not a guarantee. Acting on a file that merely looked
     // right is how a ledger gets corrupted.
-    const { queries } = setup("CDS-NOT-REALLY~Acme");
+    const { writes } = setup("CDS-NOT-REALLY~Acme");
 
     await runHandler();
 
-    expect(queries).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 });
 
@@ -115,52 +115,73 @@ describe("writing", () => {
     vi.clearAllMocks();
   });
 
-  it("clears the declared window before inserting", async () => {
-    // Replace-by-window is what makes a re-export idempotent: without the delete, importing the
-    // same period twice doubles every total.
-    const { queries } = setup(LEDGER);
+  const rowsFor = (writes: Write[], type: string) =>
+    writes.filter((w) => w.type === type).flatMap((w) => w.rows);
 
-    await runHandler();
-
-    const deletes = queries.filter((q) => q.cypher.includes("DETACH DELETE"));
-    expect(deletes).toHaveLength(2);
-    expect(deletes.every((q) => q.params?.from === "2025-07-01" && q.params?.to === "2026-06-30"))
-      .toBe(true);
-    // And the delete happens before any write.
-    const firstWrite = queries.findIndex((q) => q.cypher.includes("MERGE"));
-    const lastDelete = queries.map((q) => q.cypher.includes("DETACH DELETE")).lastIndexOf(true);
-    expect(lastDelete).toBeLessThan(firstWrite);
+  it("upserts accounts, transactions and postings", () => {
+    const { writes } = setup(LEDGER);
+    return runHandler().then(() => {
+      expect(rowsFor(writes, "LedgerAccount")).toHaveLength(2);
+      expect(rowsFor(writes, "LedgerTransaction")).toHaveLength(2);
+      expect(rowsFor(writes, "LedgerEntry")).toHaveLength(2);
+    });
   });
 
   it("writes coverage last, so it never claims data that did not land", async () => {
-    const { queries } = setup(LEDGER);
+    const { writes } = setup(LEDGER);
 
     await runHandler();
 
-    const coverageIndex = queries.findIndex((q) => q.cypher.includes("LedgerCoverage"));
-    expect(coverageIndex).toBe(queries.length - 1);
+    expect(writes[writes.length - 1].type).toBe("LedgerCoverage");
   });
 
-  it("keys entities on source, entity and code so two companies never collide", async () => {
-    const { queries } = setup(LEDGER);
+  it("keys entities on source and entity so two companies never collide", async () => {
+    const { writes } = setup(LEDGER);
 
     await runHandler();
 
-    const accounts = queries.find((q) => q.cypher.includes("MERGE (a:LedgerAccount"));
-    const rows = accounts?.params?.rows as { key: string }[];
-    expect(rows[0].key).toBe("myob-ceedata:Acme Pty Ltd:6-4390");
+    expect(rowsFor(writes, "LedgerAccount")[0].key).toBe("myob-ceedata:Acme Pty Ltd:6-4390");
+  });
+
+  it("keys a posting by its position in its transaction, not the vendor's line id", async () => {
+    // Nothing promises the export's own line id survives a re-export. Position within a
+    // transaction is derivable from the file and stable under a far weaker assumption.
+    const { writes } = setup(LEDGER);
+
+    await runHandler();
+
+    expect(rowsFor(writes, "LedgerEntry").map((r) => r.key)).toEqual([
+      "myob-ceedata:Acme Pty Ltd:REF1:0",
+      "myob-ceedata:Acme Pty Ltd:REF2:0",
+    ]);
+  });
+
+  it("gives every row a title, so entries are not invisible in entity surfaces", async () => {
+    const { writes } = setup(LEDGER);
+
+    await runHandler();
+
+    expect(writes.flatMap((w) => w.rows).every((r) => !!r.title)).toBe(true);
+  });
+
+  it("carries the join fields, since a batch cannot create edges", async () => {
+    const { writes } = setup(LEDGER);
+
+    await runHandler();
+
+    const posting = rowsFor(writes, "LedgerEntry")[0];
+    expect(posting.accountCode).toBe("6-4390");
+    expect(posting.transactionRef).toBe("REF1");
   });
 
   it("preserves the sign of each posting", async () => {
     // Income is credited and therefore negative. Absolute-valuing on import would make income
     // and expenditure indistinguishable.
-    const { queries } = setup(LEDGER);
+    const { writes } = setup(LEDGER);
 
     await runHandler();
 
-    const entries = queries.find((q) => q.cypher.includes("MERGE (e:LedgerEntry"));
-    const rows = entries?.params?.rows as { amount: number }[];
-    expect(rows.map((r) => r.amount)).toEqual([42.5, -100]);
+    expect(rowsFor(writes, "LedgerEntry").map((r) => r.amount)).toEqual([42.5, -100]);
   });
 });
 
@@ -173,12 +194,12 @@ describe("refusing to import unsafely", () => {
     // Without a window an import cannot be superseded, so a later export of the same period
     // would double the totals rather than replace them.
     const noHeader = ["CDS1~", "TR~1~03/07/25~6-4390~REF1~42.50~~COFFEE~"].join("\n");
-    const { queries } = setup(noHeader);
+    const { writes } = setup(noHeader);
 
     const message = await runHandler();
 
     expect(message).toContain("does not declare which period");
-    expect(queries).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 });
 

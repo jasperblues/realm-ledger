@@ -43,11 +43,12 @@ declare const gateway: {
     head(args: { storageKey: string; maxChars?: number }): Promise<string>;
     read(args: { storageKey: string }): Promise<string>;
   };
-  kg: {
-    query(args: { cypher: string; params?: Record<string, unknown> }): Promise<{
-      rows: Record<string, unknown>[];
-      warnings: string[];
-    }>;
+  repository: {
+    /**
+     * Bulk upsert. Identity-keyed MERGE per row, so re-importing a period updates in place
+     * instead of duplicating. Relations are not supported here — see the note on joins below.
+     */
+    createEntries(args: { type: string; rows: Record<string, unknown>[] }): Promise<string>;
   };
 };
 
@@ -83,138 +84,97 @@ export default async function importLedger(): Promise<string> {
 }
 
 /**
- * Replace the declared window, then write.
+ * Upsert everything the file contains.
  *
- * Replace-by-window rather than merge-by-line: the file header declares exactly what it covers,
- * so deleting that range and re-inserting is idempotent no matter how many times the same period
- * is exported, and does not depend on line ids being stable across exports (they are not
- * guaranteed to be). Amended prior-period transactions correct themselves for free.
+ * UPSERT, NOT REPLACE. Replacing a date range would need a bulk delete, and the repository surface
+ * deletes one entry at a time by id — so a "replace the window" import would be thousands of
+ * round-trips to remove rows before thousands more to write them. Upsert gets what a re-export
+ * actually needs: postings already held are updated in place, new ones are appended.
+ *
+ * What upsert does NOT do: notice a transaction DELETED in the accounting package. It will linger.
+ * That is a real limitation and the reason this reports what it wrote rather than claiming the
+ * graph now mirrors the file.
+ *
+ * JOINS BY PROPERTY, NOT EDGE. A batch create cannot carry relations, so a posting records its
+ * `accountCode` and `transactionRef` as fields and the views join on them. Less graph-shaped, but
+ * correct and idempotent; edges can be added later without changing what a row means.
  */
 async function writeLedger(ledger: Ledger): Promise<void> {
-  const { entity, from, to, source } = ledger.coverage;
+  const { entity, source } = ledger.coverage;
 
-  // Delete first. Entries and transactions within the window only — accounts are reference data
-  // shared across windows and are upserted rather than replaced.
-  await gateway.kg.query({
-    cypher: `
-      MATCH (e:LedgerEntry)
-      WHERE e.entity = $entity AND e.source = $source AND e.date >= $from AND e.date <= $to
-      DETACH DELETE e
-    `,
-    params: { entity, source, from, to },
-  });
-  await gateway.kg.query({
-    cypher: `
-      MATCH (t:LedgerTransaction)
-      WHERE t.entity = $entity AND t.source = $source AND t.date >= $from AND t.date <= $to
-      DETACH DELETE t
-    `,
-    params: { entity, source, from, to },
-  });
+  await inBatches(ledger.accounts, (a) => ({
+    // Keyed on the account code within one company's books: a code is unique per entity, and a
+    // user may keep more than one set.
+    key: `${source}:${entity}:${a.code}`,
+    title: a.name,
+    code: a.code,
+    accountType: a.type,
+    parentCode: a.parent ?? null,
+    taxCode: a.taxCode ?? null,
+    header: a.header,
+    active: a.active,
+    entity,
+    source,
+  }), "LedgerAccount");
 
-  for (const chunk of chunked(ledger.accounts, 200)) {
-    await gateway.kg.query({
-      cypher: `
-        UNWIND $rows AS row
-        MERGE (a:LedgerAccount {key: row.key})
-        SET a.code = row.code, a.name = row.name, a.accountType = row.accountType,
-            a.parentCode = row.parentCode, a.taxCode = row.taxCode,
-            a.header = row.header, a.active = row.active,
-            a.entity = row.entity, a.source = row.source
-      `,
-      params: {
-        rows: chunk.map((a) => ({
-          key: `${source}:${entity}:${a.code}`,
-          code: a.code,
-          name: a.name,
-          accountType: a.type,
-          parentCode: a.parent ?? null,
-          taxCode: a.taxCode ?? null,
-          header: a.header,
-          active: a.active,
-          entity,
-          source,
-        })),
-      },
-    });
-  }
+  const transactions = [...groupByRef(ledger).values()];
+  await inBatches(transactions, (t) => ({
+    key: `${source}:${entity}:${t.reference}`,
+    title: t.narration,
+    reference: t.reference,
+    date: t.date,
+    narration: t.narration,
+    entity,
+    source,
+  }), "LedgerTransaction");
 
-  // Transactions carry the narration of their first posting: the counterparty is named there,
-  // and it is what "who did we pay" reads.
-  const byRef = groupByRef(ledger);
-  for (const chunk of chunked([...byRef.values()], 200)) {
-    await gateway.kg.query({
-      cypher: `
-        UNWIND $rows AS row
-        MERGE (t:LedgerTransaction {key: row.key})
-        SET t.reference = row.reference, t.date = row.date, t.narration = row.narration,
-            t.entity = row.entity, t.source = row.source
-      `,
-      params: {
-        rows: chunk.map((t) => ({
-          key: `${source}:${entity}:${t.reference}`,
-          reference: t.reference,
-          date: t.date,
-          narration: t.narration,
-          entity,
-          source,
-        })),
-      },
-    });
-  }
+  await inBatches(postingRows(ledger), (r) => r, "LedgerEntry");
 
-  for (const chunk of chunked(ledger.lines, 200)) {
-    await gateway.kg.query({
-      cypher: `
-        UNWIND $rows AS row
-        MERGE (e:LedgerEntry {key: row.key})
-        SET e.amount = row.amount, e.date = row.date, e.accountCode = row.accountCode,
-            e.description = row.description, e.entity = row.entity, e.source = row.source
-        WITH e, row
-        MATCH (t:LedgerTransaction {key: row.transactionKey})
-        MERGE (t)-[:HAS_ENTRY]->(e)
-        WITH e, row
-        MATCH (a:LedgerAccount {key: row.accountKey})
-        MERGE (e)-[:POSTED_TO]->(a)
-      `,
-      params: {
-        rows: chunk.map((l, i) => ({
-          key: `${source}:${entity}:${l.transactionRef}:${l.lineId ?? i}`,
-          transactionKey: `${source}:${entity}:${l.transactionRef}`,
-          accountKey: `${source}:${entity}:${l.accountCode}`,
-          amount: l.amount,
-          date: l.date,
-          accountCode: l.accountCode,
-          description: l.description,
-          entity,
-          source,
-        })),
-      },
-    });
-  }
-
-  // Coverage last, so a record only exists for data that actually landed. Written after the
-  // rows precisely so a crash mid-import leaves no claim to completeness.
-  await gateway.kg.query({
-    cypher: `
-      MERGE (c:LedgerCoverage {key: $key})
-      SET c.entity = $entity, c.fromDate = $from, c.toDate = $to, c.source = $source,
-          c.importedAt = $importedAt, c.lineCount = $lineCount, c.rejectedCount = $rejectedCount
-    `,
-    params: {
-      key: `${source}:${entity}:${from}:${to}`,
+  // Coverage last, so a record only exists for data that actually landed.
+  await gateway.repository.createEntries({
+    type: "LedgerCoverage",
+    rows: [{
+      key: `${source}:${entity}:${ledger.coverage.from}:${ledger.coverage.to}`,
+      title: `${entity} ${ledger.coverage.from} to ${ledger.coverage.to}`,
       entity,
-      from,
-      to,
+      fromDate: ledger.coverage.from,
+      toDate: ledger.coverage.to,
       source,
       importedAt: new Date().toISOString(),
       lineCount: ledger.lines.length,
-      rejectedCount: 0,
-    },
+    }],
   });
 }
 
-/** One transaction per reference, taking its date and narration from the first posting seen. */
+/**
+ * A stable identity for each posting, derived from the data rather than the vendor's line id.
+ *
+ * The export carries its own line id, but nothing promises it survives a re-export — and if it is
+ * regenerated, keying on it turns every re-import into a duplicate set. Position within a
+ * transaction is derivable from the file itself and stable as long as the package emits a
+ * transaction's postings in the same order, which is a far weaker assumption.
+ */
+function postingRows(ledger: Ledger): Record<string, unknown>[] {
+  const { entity, source } = ledger.coverage;
+  const ordinals = new Map<string, number>();
+  return ledger.lines.map((l) => {
+    const seen = ordinals.get(l.transactionRef) ?? 0;
+    ordinals.set(l.transactionRef, seen + 1);
+    return {
+      key: `${source}:${entity}:${l.transactionRef}:${seen}`,
+      title: l.description || `${l.accountCode} ${l.amount}`,
+      amount: l.amount,
+      date: l.date,
+      accountCode: l.accountCode,
+      transactionRef: l.transactionRef,
+      description: l.description,
+      entity,
+      source,
+    };
+  });
+}
+
+/** One transaction per reference, taking date and narration from the first posting seen. */
 function groupByRef(ledger: Ledger) {
   const byRef = new Map<string, { reference: string; date: string; narration: string }>();
   for (const line of ledger.lines) {
@@ -228,6 +188,19 @@ function groupByRef(ledger: Ledger) {
   }
   return byRef;
 }
+
+/** Send in chunks: one call per chunk, each validated and written as a set. */
+async function inBatches<T>(
+  items: T[],
+  toRow: (item: T) => Record<string, unknown>,
+  type: string,
+): Promise<void> {
+  for (const chunk of chunked(items, BATCH_SIZE)) {
+    await gateway.repository.createEntries({ type, rows: chunk.map(toRow) });
+  }
+}
+
+const BATCH_SIZE = 200;
 
 function chunked<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];

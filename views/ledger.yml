@@ -1,3 +1,9 @@
+# JOINS ARE BY PROPERTY, NOT EDGE. A bulk create cannot carry relations, so a posting records its
+# `accountCode` and `transactionRef` and these views match on them (always together with `entity`
+# and `source`, or two companies' books would join into each other). Less graph-shaped than a
+# traversal, and correct. If edges arrive later these views can move to them without changing what
+# a row means.
+#
 # Canonical LEDGER AGGREGATE views (TABULAR — they RETURN scalars, so they are report-only
 # result sets, not traversable node subsets).
 #
@@ -26,8 +32,9 @@
       default: 25
       description: "Maximum categories to return."
   cypher: |
-    MATCH (a:LedgerAccount)<-[:POSTED_TO]-(e:LedgerEntry)
-    WHERE a.accountType IN ['expense', 'cost-of-sales', 'other-expense']
+    MATCH (a:LedgerAccount), (e:LedgerEntry)
+    WHERE e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
+      AND a.accountType IN ['expense', 'cost-of-sales', 'other-expense']
       AND e.date >= $from AND e.date <= $to
     WITH a, sum(e.amount) AS total, count(DISTINCT e.key) AS transactions
     WHERE total <> 0
@@ -55,11 +62,14 @@
       default: 200
       description: "Maximum postings to return."
   cypher: |
-    MATCH (a:LedgerAccount)<-[:POSTED_TO]-(e:LedgerEntry)<-[:HAS_ENTRY]-(t:LedgerTransaction)
-    WHERE toLower(a.name) CONTAINS toLower($category)
+    MATCH (a:LedgerAccount), (e:LedgerEntry)
+    WHERE e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
+      AND toLower(a.name) CONTAINS toLower($category)
       AND e.date >= $from AND e.date <= $to
+    OPTIONAL MATCH (t:LedgerTransaction)
+      WHERE t.reference = e.transactionRef AND t.entity = e.entity AND t.source = e.source
     RETURN e.date AS date, e.amount AS amount, e.description AS narration,
-           t.counterpartyName AS counterparty
+           coalesce(t.counterpartyName, t.narration) AS counterparty
     ORDER BY date DESC, amount DESC
     LIMIT $limit
 
@@ -79,9 +89,12 @@
       default: 25
       description: "Maximum clients to return."
   cypher: |
-    MATCH (a:LedgerAccount)<-[:POSTED_TO]-(e:LedgerEntry)<-[:HAS_ENTRY]-(t:LedgerTransaction)
-    WHERE a.accountType IN ['income', 'other-income']
+    MATCH (a:LedgerAccount), (e:LedgerEntry)
+    WHERE e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
+      AND a.accountType IN ['income', 'other-income']
       AND e.date >= $from AND e.date <= $to
+    OPTIONAL MATCH (t:LedgerTransaction)
+      WHERE t.reference = e.transactionRef AND t.entity = e.entity AND t.source = e.source
     // Income is credited, so it is stored negative. Negate once, here, rather than leaving
     // every caller to remember the sign convention.
     WITH coalesce(t.counterpartyName, t.narration) AS client, -sum(e.amount) AS total,
@@ -110,8 +123,9 @@
       type: string
       description: "End date, ISO yyyy-mm-dd, inclusive."
   cypher: |
-    MATCH (a:LedgerAccount)<-[:POSTED_TO]-(e:LedgerEntry)
-    WHERE toLower(a.name) CONTAINS toLower($category)
+    MATCH (a:LedgerAccount), (e:LedgerEntry)
+    WHERE e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
+      AND toLower(a.name) CONTAINS toLower($category)
       AND e.date >= $from AND e.date <= $to
     WITH substring(e.date, 0, 7) AS month, sum(e.amount) AS total, count(e) AS transactions
     RETURN month, total, transactions
@@ -144,10 +158,12 @@
       default: 25
       description: "Maximum counterparties to return."
   cypher: |
-    MATCH (t:LedgerTransaction)-[:HAS_ENTRY]->(e:LedgerEntry)-[:POSTED_TO]->(a:LedgerAccount)
-    WHERE e.date >= $from AND e.date <= $to
-      AND coalesce(t.counterpartyName, '') <> ''
-    WITH t.counterpartyName AS counterparty,
+    MATCH (t:LedgerTransaction), (e:LedgerEntry), (a:LedgerAccount)
+    WHERE e.transactionRef = t.reference AND e.entity = t.entity AND e.source = t.source
+      AND e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
+      AND e.date >= $from AND e.date <= $to
+      AND coalesce(t.counterpartyName, t.narration, '') <> ''
+    WITH coalesce(t.counterpartyName, t.narration) AS counterparty,
          sum(CASE WHEN a.accountType IN ['expense', 'cost-of-sales', 'other-expense']
                   THEN e.amount ELSE 0 END) AS spent,
          sum(CASE WHEN a.accountType IN ['income', 'other-income']

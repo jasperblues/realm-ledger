@@ -7,9 +7,13 @@
 # most useful questions would be rejected at plan time.
 #
 # Three nodes, because a journal line alone cannot answer the interesting questions. A sale's
-# customer is named on the receivable line while its revenue sits on the income line, so
-# something has to hold them together — that is LedgerTransaction, and it is why "revenue by
-# customer" is a traversal here rather than a string-matching exercise.
+# customer is named on the receivable line while its revenue sits on the income line, so something
+# has to hold them together — that is LedgerTransaction.
+#
+# They are joined BY PROPERTY, not by edge: a bulk create cannot carry relations, so a posting
+# records accountCode and transactionRef and the views match on them (always with entity and
+# source, or two companies' books would join into each other). Edges can be added later without
+# changing what a row means.
 
 - name: LedgerAccount
   description: >-
@@ -93,7 +97,13 @@
     date:
       description: "Posting date, ISO yyyy-mm-dd. Denormalised from the transaction for filtering."
     accountCode:
-      description: "The account posted to. Resolved to a LedgerAccount by POSTED_TO."
+      description: >-
+        The account posted to. Joined to LedgerAccount by code, together with entity and source —
+        a bulk create cannot carry edges, so the join is by property.
+    transactionRef:
+      description: >-
+        The transaction this posting belongs to. Joined to LedgerTransaction by reference, together
+        with entity and source. This is what ties a sale's customer to its revenue.
     description:
       description: "The posting's own narration, verbatim."
     entity:
