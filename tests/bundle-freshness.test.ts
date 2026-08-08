@@ -20,7 +20,7 @@ describe("committed bundle", () => {
     const root = resolve(__dirname, "..");
 
     const result = await build({
-      entryPoints: [resolve(root, "src/handlers/import-ledger.ts")],
+      entryPoints: [resolve(root, "src/handlers/import-ledger.entry.ts")],
       bundle: true,
       format: "esm",
       platform: "neutral",

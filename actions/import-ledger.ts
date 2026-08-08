@@ -399,6 +399,6 @@ function summarise(filename, result) {
   }
   return parts.join(" ");
 }
-export {
-  importLedger as default
-};
+
+// src/handlers/import-ledger.entry.ts
+console.log(await importLedger());
