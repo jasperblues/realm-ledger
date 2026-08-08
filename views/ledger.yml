@@ -38,7 +38,7 @@
       AND e.date >= $from AND e.date <= $to
     WITH a, sum(e.amount) AS total, count(DISTINCT e.key) AS transactions
     WHERE total <> 0
-    RETURN a.name AS category, a.code AS code, total, transactions
+    RETURN a.title AS category, a.code AS code, total, transactions
     ORDER BY total DESC, category ASC
     LIMIT $limit
 
@@ -64,7 +64,7 @@
   cypher: |
     MATCH (a:LedgerAccount), (e:LedgerEntry)
     WHERE e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
-      AND toLower(a.name) CONTAINS toLower($category)
+      AND toLower(a.title) CONTAINS toLower($category)
       AND e.date >= $from AND e.date <= $to
     OPTIONAL MATCH (t:LedgerTransaction)
       WHERE t.reference = e.transactionRef AND t.entity = e.entity AND t.source = e.source
@@ -125,7 +125,7 @@
   cypher: |
     MATCH (a:LedgerAccount), (e:LedgerEntry)
     WHERE e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
-      AND toLower(a.name) CONTAINS toLower($category)
+      AND toLower(a.title) CONTAINS toLower($category)
       AND e.date >= $from AND e.date <= $to
     WITH substring(e.date, 0, 7) AS month, sum(e.amount) AS total, count(e) AS transactions
     RETURN month, total, transactions

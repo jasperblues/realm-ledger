@@ -26,10 +26,13 @@
         within one company's books and a user may keep more than one set.
       metadata:
         identity: "true"
+    title:
+      description: >-
+        Display name — the account name as the bookkeeper wrote it, e.g. 'Staff Amenities'. Named
+        `title` because the host picks title/name/summary as a node's headline, and a type with
+        none of them renders as its id in every list and query result.
     code:
       description: "The source's account code, e.g. 6-4390. How postings reference it."
-    name:
-      description: "Account name as the bookkeeper wrote it, e.g. 'Staff Amenities'."
     accountType:
       description: >-
         asset, liability, equity, income, expense, cost-of-sales, other-income, other-expense,
@@ -57,6 +60,8 @@
       description: "Identity. Composite of source, entity and the source's transaction reference."
       metadata:
         identity: "true"
+    title:
+      description: "Display name — the transaction's narration. See LedgerAccount.title."
     reference:
       description: "The source's own grouping reference for the postings."
     date:
@@ -89,6 +94,8 @@
       description: "Identity. Composite of source, entity, transaction reference and line id."
       metadata:
         identity: "true"
+    title:
+      description: "Display name — the posting's narration. See LedgerAccount.title."
     amount:
       description: >-
         Signed, in the books' own currency and the source's own convention: positive debit,
@@ -122,6 +129,8 @@
       description: "Identity. Composite of source, entity and the covered window."
       metadata:
         identity: "true"
+    title:
+      description: "Display name — entity and covered period. See LedgerAccount.title."
     entity:
       description: "The company whose books these are."
     fromDate:
