@@ -9,6 +9,12 @@ An imported general ledger: `LedgerAccount` (the chart of accounts), `LedgerTran
 accounting event), `LedgerEntry` (a single posting), and `LedgerCoverage` (which periods have
 actually been imported).
 
+**Activating this skill loads nothing.** It gives you the views and the rules; it does not fetch,
+import, or check any data. Never say the ledger "has been loaded" or "is ready" on activation —
+an import takes tens of seconds, and announcing it as done while it is still running produces a
+flat contradiction two turns later, when a query is refused because the import is in flight. Say
+what you can do, then find out what is actually there with `ledger_coverage`.
+
 ## Use the views
 
 Run them by name rather than writing the Cypher yourself. The aggregation is done once, inside
