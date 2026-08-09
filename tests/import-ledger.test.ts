@@ -14,7 +14,19 @@ interface Write {
   rows: Record<string, unknown>[];
 }
 
-function setup(fileContent: string, filename = "ledger.txt") {
+/**
+ * Default: the store reports every row as new. Tests that need the re-import case pass a
+ * summariser producing the "none were new" shape instead — the handler's message is derived from
+ * these strings, so a stub that lies about them tests nothing.
+ */
+const allNew = (w: Write) => `Created ${w.rows.length} new ${w.type} entries.`;
+const noneNew = (w: Write) => `Updated ${w.rows.length} existing ${w.type} entries. None were new.`;
+
+function setup(
+  fileContent: string,
+  filename = "ledger.txt",
+  summariser: (w: Write) => string = allNew,
+) {
   const writes: Write[] = [];
   const reads: string[] = [];
 
@@ -49,7 +61,7 @@ function setup(fileContent: string, filename = "ledger.txt") {
     repository: {
       createEntries: vi.fn(async (w: Write) => {
         writes.push(w);
-        return `Created or updated ${w.rows.length} ${w.type} entries.`;
+        return summariser(w);
       }),
     },
   };
@@ -237,5 +249,51 @@ describe("reporting", () => {
     const message = await runHandler();
 
     expect(message).toContain("day-first");
+  });
+});
+
+describe("what the import reports", () => {
+  const file = [
+    "CDS1~Acme Pty Ltd~01/07/25~30/06/26",
+    "AC~6-4390~Staff Amenities",
+    "TR~1~01/02/26~6-4390~REF1~42.50~~COFFEE~",
+    "TR~2~02/02/26~6-4390~REF2~17.50~~MILK~",
+  ].join("\n");
+
+  it("reports a first import as new postings", async () => {
+    setup(file);
+
+    expect(await runHandler()).toContain("Imported 2 postings");
+  });
+
+  it("does not claim an import when nothing changed", async () => {
+    // The defect: re-importing an unchanged export announced every parsed row as imported, so a
+    // no-op read as success. This is the message the user actually sees.
+    setup(file, "ledger.txt", noneNew);
+
+    const message = await runHandler();
+
+    expect(message).toContain("No new postings");
+    expect(message).toContain("already in your ledger");
+    expect(message).not.toContain("Imported 2 postings");
+  });
+
+  it("separates new postings from ones already present", async () => {
+    setup(file, "ledger.txt", (w) =>
+      w.type === "LedgerEntry"
+        ? "Created 1 new and updated 1 existing LedgerEntry entries."
+        : allNew(w),
+    );
+
+    const message = await runHandler();
+
+    expect(message).toContain("Added 1 new postings");
+    expect(message).toContain("refreshed 1 already present");
+  });
+
+  it("counts zero rather than inventing a number it cannot read", async () => {
+    setup(file, "ledger.txt", () => "something the store did not used to say");
+
+    expect(await runHandler()).not.toMatch(/Imported [1-9]/);
   });
 });

@@ -251,8 +251,8 @@ async function importLedger() {
   if (!ledger.coverage.from || !ledger.coverage.to) {
     return `${filename} does not declare which period it covers, so it cannot be imported safely \u2014 a later export of the same period would double the totals rather than replace them.`;
   }
-  await writeLedger(ledger);
-  return summarise(filename, result);
+  const written = await writeLedger(ledger);
+  return summarise(filename, result, written);
 }
 async function writeLedger(ledger) {
   const { entity, source } = ledger.coverage;
@@ -280,7 +280,7 @@ async function writeLedger(ledger) {
     entity,
     source
   }), "LedgerTransaction");
-  await inBatches(postingRows(ledger), (r) => r, "LedgerEntry");
+  const postings = await inBatches(postingRows(ledger), (r) => r, "LedgerEntry");
   await gateway.repository.createEntries({
     type: "LedgerCoverage",
     rows: [{
@@ -294,6 +294,7 @@ async function writeLedger(ledger) {
       lineCount: ledger.lines.length
     }]
   });
+  return postings;
 }
 function postingRows(ledger) {
   const { entity, source } = ledger.coverage;
@@ -327,10 +328,23 @@ function groupByRef(ledger) {
   }
   return byRef;
 }
+function parseWriteCounts(summary) {
+  const created = /Created (\d+) new/.exec(summary);
+  const updated = /[Uu]pdated (\d+) existing/.exec(summary);
+  return {
+    created: created ? Number(created[1]) : 0,
+    updated: updated ? Number(updated[1]) : 0
+  };
+}
 async function inBatches(items, toRow, type) {
+  const total = { created: 0, updated: 0 };
   for (const chunk of chunked(items, BATCH_SIZE)) {
-    await gateway.repository.createEntries({ type, rows: chunk.map(toRow) });
+    const summary = await gateway.repository.createEntries({ type, rows: chunk.map(toRow) });
+    const counts = parseWriteCounts(summary);
+    total.created += counts.created;
+    total.updated += counts.updated;
   }
+  return total;
 }
 var BATCH_SIZE = 200;
 function chunked(items, size) {
@@ -338,12 +352,13 @@ function chunked(items, size) {
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
 }
-function summarise(filename, result) {
+function summarise(filename, result, written) {
   const { ledger, rejected, clarifications } = result;
   const { entity, from, to } = ledger.coverage;
-  const parts = [
-    `Imported ${ledger.lines.length} postings and ${ledger.accounts.length} accounts for ${entity}, covering ${from} to ${to}, from ${filename}.`
-  ];
+  const { created, updated } = written;
+  const scope = `for ${entity}, covering ${from} to ${to}, from ${filename}.`;
+  const headline = created === 0 && updated > 0 ? `No new postings: all ${updated} in this file were already in your ledger, ${scope}` : updated === 0 ? `Imported ${created} postings and ${ledger.accounts.length} accounts ${scope}` : `Added ${created} new postings and refreshed ${updated} already present, across ${ledger.accounts.length} accounts, ${scope}`;
+  const parts = [headline];
   if (rejected.length > 0) {
     parts.push(
       `${rejected.length} row(s) could not be read: ` + rejected.slice(0, 3).map((r) => `line ${r.line} (${r.reason})`).join("; ") + (rejected.length > 3 ? `, and ${rejected.length - 3} more.` : ".")

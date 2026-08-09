@@ -78,9 +78,9 @@ export default async function importLedger(): Promise<string> {
     );
   }
 
-  await writeLedger(ledger);
+  const written = await writeLedger(ledger);
 
-  return summarise(filename, result);
+  return summarise(filename, result, written);
 }
 
 /**
@@ -99,7 +99,7 @@ export default async function importLedger(): Promise<string> {
  * `accountCode` and `transactionRef` as fields and the views join on them. Less graph-shaped, but
  * correct and idempotent; edges can be added later without changing what a row means.
  */
-async function writeLedger(ledger: Ledger): Promise<void> {
+async function writeLedger(ledger: Ledger): Promise<WriteCounts> {
   const { entity, source } = ledger.coverage;
 
   await inBatches(ledger.accounts, (a) => ({
@@ -128,7 +128,7 @@ async function writeLedger(ledger: Ledger): Promise<void> {
     source,
   }), "LedgerTransaction");
 
-  await inBatches(postingRows(ledger), (r) => r, "LedgerEntry");
+  const postings = await inBatches(postingRows(ledger), (r) => r, "LedgerEntry");
 
   // Coverage last, so a record only exists for data that actually landed.
   await gateway.repository.createEntries({
@@ -144,6 +144,8 @@ async function writeLedger(ledger: Ledger): Promise<void> {
       lineCount: ledger.lines.length,
     }],
   });
+
+  return postings;
 }
 
 /**
@@ -189,15 +191,45 @@ function groupByRef(ledger: Ledger) {
   return byRef;
 }
 
+/** How many rows a write actually added, as opposed to how many it sent. */
+export interface WriteCounts {
+  created: number;
+  updated: number;
+}
+
+/**
+ * Read the counts back out of the store's summary line.
+ *
+ * The store distinguishes a fresh node from a MERGE onto an existing one; without reading that
+ * back, this handler can only report how many rows it PARSED — which announces a successful
+ * import of 2,340 postings when a re-run of an unchanged export changed nothing at all.
+ *
+ * An unrecognised summary counts as zero rather than guessing: under-reporting is recoverable,
+ * a fabricated "added 2,340" is not.
+ */
+export function parseWriteCounts(summary: string): WriteCounts {
+  const created = /Created (\d+) new/.exec(summary);
+  const updated = /[Uu]pdated (\d+) existing/.exec(summary);
+  return {
+    created: created ? Number(created[1]) : 0,
+    updated: updated ? Number(updated[1]) : 0,
+  };
+}
+
 /** Send in chunks: one call per chunk, each validated and written as a set. */
 async function inBatches<T>(
   items: T[],
   toRow: (item: T) => Record<string, unknown>,
   type: string,
-): Promise<void> {
+): Promise<WriteCounts> {
+  const total: WriteCounts = { created: 0, updated: 0 };
   for (const chunk of chunked(items, BATCH_SIZE)) {
-    await gateway.repository.createEntries({ type, rows: chunk.map(toRow) });
+    const summary = await gateway.repository.createEntries({ type, rows: chunk.map(toRow) });
+    const counts = parseWriteCounts(summary);
+    total.created += counts.created;
+    total.updated += counts.updated;
   }
+  return total;
 }
 
 const BATCH_SIZE = 200;
@@ -215,14 +247,24 @@ function chunked<T>(items: T[], size: number): T[][] {
  * claim from "2,340", and surfaces clarifications so an assumption the parser had to make is
  * visible rather than buried.
  */
-function summarise(filename: string, result: ParseResult): string {
+function summarise(filename: string, result: ParseResult, written: WriteCounts): string {
   const { ledger, rejected, clarifications } = result;
   const { entity, from, to } = ledger.coverage;
+  const { created, updated } = written;
 
-  const parts = [
-    `Imported ${ledger.lines.length} postings and ${ledger.accounts.length} accounts ` +
-      `for ${entity}, covering ${from} to ${to}, from ${filename}.`,
-  ];
+  // Report what CHANGED, not what was parsed. Re-importing an unchanged export sends every row
+  // and moves nothing; saying "imported 2,340 postings" there is a success message for a no-op,
+  // and the person appending a partial year is the one who most needs the difference.
+  const scope = `for ${entity}, covering ${from} to ${to}, from ${filename}.`;
+  const headline =
+    created === 0 && updated > 0
+      ? `No new postings: all ${updated} in this file were already in your ledger, ${scope}`
+      : updated === 0
+        ? `Imported ${created} postings and ${ledger.accounts.length} accounts ${scope}`
+        : `Added ${created} new postings and refreshed ${updated} already present, ` +
+          `across ${ledger.accounts.length} accounts, ${scope}`;
+
+  const parts = [headline];
   if (rejected.length > 0) {
     parts.push(
       `${rejected.length} row(s) could not be read: ` +
