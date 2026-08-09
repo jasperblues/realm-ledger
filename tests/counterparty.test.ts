@@ -47,6 +47,33 @@ describe("stripping a narration to the party", () => {
     expect(stripNarration(raw)).toBe(expected);
   });
 
+  it.each([
+    // Card-terminal dates: one cafe became ten suppliers, so no supplier total meant anything.
+    ["SQ *BEAN ROASTER S Suburbia 19/09", "SQ *BEAN ROASTER S Suburbia"],
+    ["SQ *BEAN ROASTER S Suburbia 04/07", "SQ *BEAN ROASTER S Suburbia"],
+    ["SQ *COFFEE CO Townsville 08/04/26", "SQ *COFFEE CO Townsville"],
+    // Trailing country the feed appends on some lines and not others.
+    ["GROCER 2705 WEST END AUS", "GROCER 2705 WEST END"],
+    // Both artifacts stacked.
+    ["SQ *BEAN ROASTER S Suburbia 19/09 AUS", "SQ *BEAN ROASTER S Suburbia"],
+  ])("strips terminal noise: %s", (raw, expected) => {
+    expect(stripNarration(raw)).toBe(expected);
+  });
+
+  it("keeps the store number and suburb — those are real distinctions", () => {
+    // Two branches of one chain are separate lines in the books, and merging them would overstate
+    // concentration at a single supplier just as splitting understated it.
+    expect(counterpartyKey("GROCER 2705 WEST END AUS"))
+      .not.toBe(counterpartyKey("GROCER 2552 MOOROOKA AUS"));
+  });
+
+  it("collapses one merchant written with and without a trailing country", () => {
+    // "ROASTER S" and "ROASTERS" already collapse once punctuation goes; the country was the only
+    // thing keeping these apart.
+    expect(counterpartyKey("SQ *BEAN ROASTER S Suburbia 19/09"))
+      .toBe(counterpartyKey("SQ *BEAN ROASTERS Suburbia AUS"));
+  });
+
   it("keeps a name that merely contains a noise word", () => {
     // "Transfer" trailing is noise; "Transfer" inside a company name is the company's name.
     expect(stripNarration("Sale; Transfer Holdings Pty Ltd")).toBe("Transfer Holdings Pty Ltd");

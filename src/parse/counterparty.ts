@@ -33,6 +33,22 @@ const NOISE = new RegExp(
   "i",
 );
 const TRAILING_REFERENCE = /\s+[A-Z]*\d[\d-]{3,}\w*\s*$/;
+/**
+ * A date the terminal appended to the merchant string: "… Moorooka 19/09", "… West End 08/04".
+ *
+ * One café became ten counterparties this way — every visit its own supplier, so no supplier total
+ * meant anything. The year is optional because card feeds usually omit it.
+ */
+const TRAILING_DATE = /\s+\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\s*$/;
+/**
+ * Trailing country/locale the feed appends: "… WEST END AUS".
+ *
+ * Removed because the same merchant appears with and without it, and a country is not what
+ * distinguishes two suppliers in one company's books. Store numbers and suburbs are deliberately
+ * KEPT: those are real distinctions the bank is reporting, and collapsing them would merge
+ * locations the books treat separately.
+ */
+const TRAILING_LOCALE = /\s+(AUS|AU|NZL|NZ|USA|US|GBR|UK|SGP|SG)\s*$/i;
 const LEADING_DOCUMENT = /^(sale|purchase|payment|receipt)\s*;\s*/i;
 const COMPANY_SUFFIX = /\b(pty|ltd|limited|pte|inc|incorporated|llc|plc|co|company)\b/gi;
 
@@ -45,14 +61,22 @@ const COMPANY_SUFFIX = /\b(pty|ltd|limited|pte|inc|incorporated|llc|plc|co|compa
  * these words keeps it unless it trails.
  */
 export function stripNarration(raw: string): string {
-  return raw
-    .replace(LEADING_DOCUMENT, "")
-    .replace(NOISE, "")
-    .replace(TRAILING_REFERENCE, "")
-    .replace(/\s+/g, " ")
-    .replace(/[;,.\s]+$/, "")
-    .trim();
+  // Applied repeatedly because these artifacts stack: "… Moorooka 19/09 AUS" carries both, and one
+  // pass would leave whichever came first.
+  let out = raw.replace(LEADING_DOCUMENT, "").replace(NOISE, "");
+  for (let i = 0; i < MAX_TRAILING_PASSES; i++) {
+    const before = out;
+    out = out
+      .replace(TRAILING_REFERENCE, "")
+      .replace(TRAILING_DATE, "")
+      .replace(TRAILING_LOCALE, "");
+    if (out === before) break;
+  }
+  return out.replace(/\s+/g, " ").replace(/[;,.\s]+$/, "").trim();
 }
+
+/** Bounded so a pathological string cannot loop; two artifacts stacked is the observed maximum. */
+const MAX_TRAILING_PASSES = 4;
 
 /**
  * Match key for a party.

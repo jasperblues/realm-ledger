@@ -241,11 +241,20 @@ var NOISE = new RegExp(
   "i"
 );
 var TRAILING_REFERENCE = /\s+[A-Z]*\d[\d-]{3,}\w*\s*$/;
+var TRAILING_DATE = /\s+\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\s*$/;
+var TRAILING_LOCALE = /\s+(AUS|AU|NZL|NZ|USA|US|GBR|UK|SGP|SG)\s*$/i;
 var LEADING_DOCUMENT = /^(sale|purchase|payment|receipt)\s*;\s*/i;
 var COMPANY_SUFFIX = /\b(pty|ltd|limited|pte|inc|incorporated|llc|plc|co|company)\b/gi;
 function stripNarration(raw) {
-  return raw.replace(LEADING_DOCUMENT, "").replace(NOISE, "").replace(TRAILING_REFERENCE, "").replace(/\s+/g, " ").replace(/[;,.\s]+$/, "").trim();
+  let out = raw.replace(LEADING_DOCUMENT, "").replace(NOISE, "");
+  for (let i = 0; i < MAX_TRAILING_PASSES; i++) {
+    const before = out;
+    out = out.replace(TRAILING_REFERENCE, "").replace(TRAILING_DATE, "").replace(TRAILING_LOCALE, "");
+    if (out === before) break;
+  }
+  return out.replace(/\s+/g, " ").replace(/[;,.\s]+$/, "").trim();
 }
+var MAX_TRAILING_PASSES = 4;
 function counterpartyKey(raw) {
   return stripNarration(raw).replace(COMPANY_SUFFIX, "").replace(/[^a-z0-9]+/gi, "").toUpperCase();
 }
