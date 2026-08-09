@@ -235,6 +235,75 @@ function truncate(raw) {
   return raw.length > 120 ? `${raw.slice(0, 120)}\u2026` : raw;
 }
 
+// src/parse/counterparty.ts
+var NOISE = new RegExp(
+  String.raw`\s+(fees?|funds?\s+transfer|short\s+payment|payment|transfer|rcti|refund\w*|` + String.raw`invoice|inv|ref|receipt|deposit|dishonour\w*)\b.*$`,
+  "i"
+);
+var TRAILING_REFERENCE = /\s+[A-Z]*\d[\d-]{3,}\w*\s*$/;
+var LEADING_DOCUMENT = /^(sale|purchase|payment|receipt)\s*;\s*/i;
+var COMPANY_SUFFIX = /\b(pty|ltd|limited|pte|inc|incorporated|llc|plc|co|company)\b/gi;
+function stripNarration(raw) {
+  return raw.replace(LEADING_DOCUMENT, "").replace(NOISE, "").replace(TRAILING_REFERENCE, "").replace(/\s+/g, " ").replace(/[;,.\s]+$/, "").trim();
+}
+function counterpartyKey(raw) {
+  return stripNarration(raw).replace(COMPANY_SUFFIX, "").replace(/[^a-z0-9]+/gi, "").toUpperCase();
+}
+function isCounterpartySide(account) {
+  return account?.type === "asset" || account?.type === "liability";
+}
+function counterpartyLegFor(line, linesByRef, accounts) {
+  const siblings = linesByRef.get(line.transactionRef) ?? [];
+  const other = siblings.filter(
+    (l) => l !== line && isCounterpartySide(accounts.get(l.accountCode)) && l.description.trim()
+  );
+  if (other.length === 0) return null;
+  const invoice = other.find((l) => LEADING_DOCUMENT.test(l.description));
+  if (invoice) return { narration: invoice.description.trim(), source: "invoice" };
+  const bank = other[0];
+  const sameText = bank.description.trim() === line.description.trim();
+  return { narration: bank.description.trim(), source: sameText ? "same-leg" : "bank" };
+}
+function resolveCounterparties(ledger) {
+  const accounts = new Map(ledger.accounts.map((a) => [a.code, a]));
+  const linesByRef = /* @__PURE__ */ new Map();
+  for (const line of ledger.lines) {
+    const at = linesByRef.get(line.transactionRef);
+    if (at) at.push(line);
+    else linesByRef.set(line.transactionRef, [line]);
+  }
+  const found = /* @__PURE__ */ new Map();
+  const variants = /* @__PURE__ */ new Map();
+  for (const line of ledger.lines) {
+    const leg = counterpartyLegFor(line, linesByRef, accounts);
+    if (!leg) continue;
+    found.set(line, leg);
+    const key = counterpartyKey(leg.narration);
+    if (!key) continue;
+    const at = variants.get(key);
+    if (at) at.push(leg);
+    else variants.set(key, [leg]);
+  }
+  const display = /* @__PURE__ */ new Map();
+  for (const [key, seen] of variants) {
+    const invoice = seen.find((v) => v.source === "invoice");
+    const chosen = invoice ? stripNarration(invoice.narration) : seen.map((v) => stripNarration(v.narration)).sort((a, b) => b.length - a.length)[0];
+    display.set(key, chosen);
+  }
+  const out = /* @__PURE__ */ new Map();
+  for (const [line, leg] of found) {
+    const key = counterpartyKey(leg.narration);
+    if (!key) continue;
+    out.set(line, {
+      name: display.get(key) ?? stripNarration(leg.narration),
+      key,
+      narration: leg.narration,
+      source: leg.source
+    });
+  }
+  return out;
+}
+
 // src/handlers/import-ledger.ts
 async function importLedger() {
   const { storageKey, filename } = signal.properties;
@@ -273,10 +342,11 @@ async function writeLedger(ledger) {
   const transactions = [...groupByRef(ledger).values()];
   await inBatches(transactions, (t) => ({
     key: `${source}:${entity}:${t.reference}`,
-    title: t.narration,
+    title: t.counterparty ?? t.narration,
     reference: t.reference,
     date: t.date,
     narration: t.narration,
+    counterparty: t.counterparty,
     entity,
     source
   }), "LedgerTransaction");
@@ -299,15 +369,32 @@ async function writeLedger(ledger) {
 function postingRows(ledger) {
   const { entity, source } = ledger.coverage;
   const ordinals = /* @__PURE__ */ new Map();
+  const accounts = new Map(ledger.accounts.map((a) => [a.code, a]));
+  const counterparties = resolveCounterparties(ledger);
   return ledger.lines.map((l) => {
     const seen = ordinals.get(l.transactionRef) ?? 0;
     ordinals.set(l.transactionRef, seen + 1);
+    const account = accounts.get(l.accountCode);
+    const party = counterparties.get(l);
     return {
       key: `${source}:${entity}:${l.transactionRef}:${seen}`,
       title: l.description || `${l.accountCode} ${l.amount}`,
       amount: l.amount,
       date: l.date,
       accountCode: l.accountCode,
+      // Carried on the posting, not left to a join. A question like "spend by supplier" is one
+      // GROUP BY over these fields; without them the only path is a traversal, and this graph has
+      // no edges between postings, accounts and transactions to traverse. A model asked to
+      // aggregate invented `HAS_ACCOUNT`, got nothing, and reported the category as having no
+      // data at all.
+      accountName: account?.name ?? null,
+      accountType: account?.type ?? null,
+      counterparty: party?.name ?? null,
+      counterpartyKey: party?.key ?? null,
+      // The text the name was read from, so a report can show which spellings it merged rather
+      // than asking anyone to trust the merge.
+      counterpartyNarration: party?.narration ?? null,
+      counterpartySource: party?.source ?? null,
       transactionRef: l.transactionRef,
       description: l.description,
       entity,
@@ -316,14 +403,21 @@ function postingRows(ledger) {
   });
 }
 function groupByRef(ledger) {
+  const counterparties = resolveCounterparties(ledger);
   const byRef = /* @__PURE__ */ new Map();
   for (const line of ledger.lines) {
-    if (!byRef.has(line.transactionRef)) {
+    const party = counterparties.get(line);
+    const existing = byRef.get(line.transactionRef);
+    if (!existing) {
       byRef.set(line.transactionRef, {
         reference: line.transactionRef,
         date: line.date,
-        narration: line.description
+        narration: party?.narration ?? line.description,
+        counterparty: party?.name ?? null
       });
+    } else if (!existing.counterparty && party) {
+      existing.narration = party.narration;
+      existing.counterparty = party.name;
     }
   }
   return byRef;

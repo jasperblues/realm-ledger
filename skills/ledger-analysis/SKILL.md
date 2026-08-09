@@ -24,6 +24,28 @@ transaction and then to a counterparty by hand, and every posting multiplies.
 | who do we transact with most | `top_counterparties` |
 | what periods do we actually have | `ledger_coverage` |
 
+## Aggregating
+
+Every posting carries what a total needs, so an aggregate is a GROUP BY over `LedgerEntry` with no
+join and no traversal:
+
+```cypher
+MATCH (e:LedgerEntry)
+WHERE e.accountName = 'Staff Amenities' AND e.date >= $from AND e.date <= $to
+RETURN e.counterparty AS supplier, sum(e.amount) AS total, count(e) AS postings
+ORDER BY total DESC
+```
+
+`accountName`, `accountType` and `counterparty` are ON the posting. There are no edges between
+postings, accounts and transactions — do not write `HAS_ACCOUNT` or any other relationship; it does
+not exist and the query will be rejected. If a result is empty, suspect the query before concluding
+there is no data: an aggregate that cannot be expressed comes back empty and reads exactly like
+"you never spent anything on this".
+
+`counterparty` is already canonical — one party has one name across invoice and bank spellings.
+Group by it directly. `counterpartyKey` is the match key if you need certainty; `counterpartyNarration`
+is the raw text it was read from, which is how you show which spellings were merged.
+
 ## Cardinal rules
 
 0. **NEVER parse the export file. Query the imported data.** Once a ledger has been imported, the
@@ -53,7 +75,17 @@ transaction and then to a counterparty by hand, and every posting multiplies.
 4. **Quote the rejected count when it is not zero.** "2,338 of 2,340 postings" is a different
    claim from "2,340 postings". `ledger_coverage` carries it.
 
-5. **The narration is evidence, not a conclusion.** `narration` is the bookkeeper's or bank
+5. **A counterparty is the OTHER side, and it is absent when unknown.** `counterparty` is read
+   from the transaction's asset leg — on a sale the income line describes the work done and the
+   receivable line names the client. It is absent when the transaction has no readable other side.
+   Absent means unknown, never "none", and never a reason to fall back to the posting's own text.
+
+6. **Say when you merged spellings.** One party often appears several ways: an invoice line and a
+   bank feed's own string. These are combined under one name, which is what makes a concentration
+   figure correct — and it must be visible. When a counterparty total matters, say how many
+   narration variants it came from and offer to list them.
+
+7. **The narration is evidence, not a conclusion.** `narration` is the bookkeeper's or bank
    feed's own text. `counterpartyName` is a best-effort reading of it and is absent when it
    could not be read confidently — absent means unknown, not none.
 

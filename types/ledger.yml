@@ -71,6 +71,10 @@
         The source's description, verbatim — usually naming a counterparty, sometimes a bank
         feed's raw merchant string. Kept unparsed because it is evidence: interpreting it is a
         separate, fallible step that must never overwrite what the books say.
+    counterparty:
+      description: >-
+        The canonicalised counterparty for the whole transaction, resolved from its asset leg.
+        Identical to the `counterparty` on its postings.
     counterpartyName:
       description: >-
         Counterparty as read from the narration, when one could be read confidently. A
@@ -113,6 +117,36 @@
         with entity and source. This is what ties a sale's customer to its revenue.
     description:
       description: "The posting's own narration, verbatim."
+    accountName:
+      description: >-
+        The account's name, copied onto the posting, e.g. 'Staff Amenities'. Denormalised on
+        purpose: "what did I spend on X, by supplier" is then one GROUP BY over postings. Without
+        it the only route is a join this graph has no edges for, and an aggregate that cannot be
+        expressed comes back empty — which reads as "no such spending" rather than "wrong query".
+    accountType:
+      description: >-
+        The account's type, copied onto the posting: income, expense, asset, liability, equity,
+        cost-of-sales, other-income, other-expense. Lets a total be scoped without a join.
+    counterparty:
+      description: >-
+        Who the other side was, canonicalised so every spelling of one party shares a name. Read
+        from the transaction's asset leg, never from this posting's own text: on a sale the income
+        line describes the WORK and the receivable line names the CLIENT. Absent when the
+        transaction has no readable other side — absent means unknown, never "none".
+    counterpartyKey:
+      description: >-
+        Match key for the counterparty: case- and punctuation-free, company suffixes removed.
+        Group by this when a total must not be split by spelling; display `counterparty`.
+    counterpartyNarration:
+      description: >-
+        The raw text the counterparty was read from, kept verbatim. A merge of several spellings
+        must be auditable — this is what lets a report show which variants it combined instead of
+        asking anyone to trust it.
+    counterpartySource:
+      description: >-
+        Where the name came from: `invoice` (a human-entered document line), `bank` (a feed's own
+        text), or `same-leg` (both legs carried the same text). An invoice name is stronger
+        evidence than a feed string.
     entity:
       description: "The company whose books this belongs to."
     source:

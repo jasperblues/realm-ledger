@@ -1,4 +1,5 @@
 import { parseCeeData, claimsCeeData, SIGNATURE } from "../parse/myob-ceedata";
+import { resolveCounterparties } from "../parse/counterparty";
 import type { Ledger, ParseResult } from "../parse/model";
 
 /**
@@ -120,10 +121,11 @@ async function writeLedger(ledger: Ledger): Promise<WriteCounts> {
   const transactions = [...groupByRef(ledger).values()];
   await inBatches(transactions, (t) => ({
     key: `${source}:${entity}:${t.reference}`,
-    title: t.narration,
+    title: t.counterparty ?? t.narration,
     reference: t.reference,
     date: t.date,
     narration: t.narration,
+    counterparty: t.counterparty,
     entity,
     source,
   }), "LedgerTransaction");
@@ -159,15 +161,32 @@ async function writeLedger(ledger: Ledger): Promise<WriteCounts> {
 function postingRows(ledger: Ledger): Record<string, unknown>[] {
   const { entity, source } = ledger.coverage;
   const ordinals = new Map<string, number>();
+  const accounts = new Map(ledger.accounts.map((a) => [a.code, a]));
+  const counterparties = resolveCounterparties(ledger);
   return ledger.lines.map((l) => {
     const seen = ordinals.get(l.transactionRef) ?? 0;
     ordinals.set(l.transactionRef, seen + 1);
+    const account = accounts.get(l.accountCode);
+    const party = counterparties.get(l);
     return {
       key: `${source}:${entity}:${l.transactionRef}:${seen}`,
       title: l.description || `${l.accountCode} ${l.amount}`,
       amount: l.amount,
       date: l.date,
       accountCode: l.accountCode,
+      // Carried on the posting, not left to a join. A question like "spend by supplier" is one
+      // GROUP BY over these fields; without them the only path is a traversal, and this graph has
+      // no edges between postings, accounts and transactions to traverse. A model asked to
+      // aggregate invented `HAS_ACCOUNT`, got nothing, and reported the category as having no
+      // data at all.
+      accountName: account?.name ?? null,
+      accountType: account?.type ?? null,
+      counterparty: party?.name ?? null,
+      counterpartyKey: party?.key ?? null,
+      // The text the name was read from, so a report can show which spellings it merged rather
+      // than asking anyone to trust the merge.
+      counterpartyNarration: party?.narration ?? null,
+      counterpartySource: party?.source ?? null,
       transactionRef: l.transactionRef,
       description: l.description,
       entity,
@@ -176,16 +195,35 @@ function postingRows(ledger: Ledger): Record<string, unknown>[] {
   });
 }
 
-/** One transaction per reference, taking date and narration from the first posting seen. */
+/**
+ * One transaction per reference.
+ *
+ * Narration comes from the counterparty leg where there is one, NOT from whichever posting was
+ * seen first. First-seen made a transaction's identity depend on file order: the same client's
+ * invoices surfaced sometimes as "Sale; <client>" and sometimes as a timesheet, so grouping by
+ * transaction narration split one client across a dozen apparent parties.
+ */
 function groupByRef(ledger: Ledger) {
-  const byRef = new Map<string, { reference: string; date: string; narration: string }>();
+  const counterparties = resolveCounterparties(ledger);
+  const byRef = new Map<
+    string,
+    { reference: string; date: string; narration: string; counterparty: string | null }
+  >();
   for (const line of ledger.lines) {
-    if (!byRef.has(line.transactionRef)) {
+    const party = counterparties.get(line);
+    const existing = byRef.get(line.transactionRef);
+    if (!existing) {
       byRef.set(line.transactionRef, {
         reference: line.transactionRef,
         date: line.date,
-        narration: line.description,
+        narration: party?.narration ?? line.description,
+        counterparty: party?.name ?? null,
       });
+    } else if (!existing.counterparty && party) {
+      // A later leg resolved a party the first one could not. Take it: a transaction with a known
+      // counterparty is strictly better identified than one narrated by whichever line came first.
+      existing.narration = party.narration;
+      existing.counterparty = party.name;
     }
   }
   return byRef;
