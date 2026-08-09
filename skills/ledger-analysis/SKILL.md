@@ -26,6 +26,15 @@ transaction and then to a counterparty by hand, and every posting multiplies.
 
 ## Cardinal rules
 
+0. **NEVER parse the export file. Query the imported data.** Once a ledger has been imported, the
+   file and the graph hold the same figures — and the file is the wrong one. Reading the export
+   with `attachment_read` and parsing it (in `execute_javascript` or anywhere else) copies bulk
+   text you cannot re-emit intact: most of it is silently dropped, the remainder parses cleanly,
+   and you report totals that are wrong by an order of magnitude with nothing flagging it. This
+   has happened: 170 transactions reported from a file holding 810, income out by 10x. If the
+   answer needs ledger figures, it comes from a view or a query over the imported data. If the
+   data is not there, say so — do not fall back to the file.
+
 1. **Check coverage before reporting a total.** A period outside the imported windows has NO
    DATA, which is not the same as zero spend. Say "I don't have data for that period" and say
    which periods you do have. A zero reads as a fact, and a wrong fact about money is worse than
