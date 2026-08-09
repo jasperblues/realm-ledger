@@ -69,7 +69,7 @@
     OPTIONAL MATCH (t:LedgerTransaction)
       WHERE t.reference = e.transactionRef AND t.entity = e.entity AND t.source = e.source
     RETURN e.date AS date, e.amount AS amount, e.description AS narration,
-           coalesce(t.counterpartyName, t.narration) AS counterparty
+           coalesce(e.counterparty, t.counterparty, t.counterpartyName, t.narration) AS counterparty
     ORDER BY date DESC, amount DESC
     LIMIT $limit
 
@@ -95,9 +95,16 @@
       AND e.date >= $from AND e.date <= $to
     OPTIONAL MATCH (t:LedgerTransaction)
       WHERE t.reference = e.transactionRef AND t.entity = e.entity AND t.source = e.source
-    // Income is credited, so it is stored negative. Negate once, here, rather than leaving
-    // every caller to remember the sign convention.
-    WITH coalesce(t.counterpartyName, t.narration) AS client, -sum(e.amount) AS total,
+    // Group by the CANONICAL counterparty, not the raw narration. One client signs an invoice
+    // "Sale; X Pty Limited" and arrives by bank as "X PTY LIMITED Fees 2177177" — grouping on the
+    // text splits them, and a concentration figure that splits its largest client understates
+    // concentration, which is the direction that matters when a statutory threshold is involved.
+    // Live: the same client reported at 73.1% and 6.4% instead of 79.8%.
+    //
+    // Income is credited, so it is stored negative. Negate once, here, rather than leaving every
+    // caller to remember the sign convention.
+    WITH coalesce(e.counterparty, t.counterparty, t.counterpartyName, t.narration) AS client,
+         -sum(e.amount) AS total,
          count(DISTINCT t.key) AS transactions
     WITH collect({client: client, total: total, transactions: transactions}) AS rows,
          sum(total) AS grand
@@ -162,8 +169,10 @@
     WHERE e.transactionRef = t.reference AND e.entity = t.entity AND e.source = t.source
       AND e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
       AND e.date >= $from AND e.date <= $to
-      AND coalesce(t.counterpartyName, t.narration, '') <> ''
-    WITH coalesce(t.counterpartyName, t.narration) AS counterparty,
+      AND coalesce(e.counterparty, t.counterparty, t.counterpartyName, t.narration, '') <> ''
+    // Canonical counterparty first, for the same reason as revenue_by_client: raw narration splits
+    // one party across every spelling a bank feed happens to use.
+    WITH coalesce(e.counterparty, t.counterparty, t.counterpartyName, t.narration) AS counterparty,
          sum(CASE WHEN a.accountType IN ['expense', 'cost-of-sales', 'other-expense']
                   THEN e.amount ELSE 0 END) AS spent,
          sum(CASE WHEN a.accountType IN ['income', 'other-income']
