@@ -29,6 +29,7 @@ transaction and then to a counterparty by hand, and every posting multiplies.
 | is this category growing | `category_trend` |
 | who do we transact with most | `top_counterparties` |
 | what periods do we actually have | `ledger_coverage` |
+| the user named a category in their own words | `find_category` FIRST, then the view above |
 
 ## Aggregating
 
@@ -62,6 +63,15 @@ is the raw text it was read from, which is how you show which spellings were mer
    has happened: 170 transactions reported from a file holding 810, income out by 10x. If the
    answer needs ledger figures, it comes from a view or a query over the imported data. If the
    data is not there, say so — do not fall back to the file.
+
+0.5. **Resolve a category name before you use it — never guess it.** The user says "travel"; the
+   books say "Travel & Accommodation". An exact-match filter on a guessed name returns zero rows
+   and reads exactly like "you spent nothing". Call `find_category` first and use what it returns.
+
+   If it returns NOTHING, the books have no such category. Say so. Do NOT then search supplier
+   names for related-sounding words: that is how a restaurant called SEA FUEL was counted as a
+   motor vehicle expense, and how a keyword list ('fuel', 'car', 'uber') becomes a category total
+   that no accountant would recognise. A category total comes from an ACCOUNT, always.
 
 1. **Check coverage before reporting a total.** A period outside the imported windows has NO
    DATA, which is not the same as zero spend. Say "I don't have data for that period" and say

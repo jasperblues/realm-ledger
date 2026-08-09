@@ -16,6 +16,35 @@
 # must answer "no data", never zero — a zero reads as a fact, and a wrong fact about money is
 # worse than an admitted gap. That is why coverage is joined rather than assumed.
 
+- name: find_category
+  description: >-
+    Resolve a WORD to the account names the books actually use, before summing anything. Ask this
+    first whenever the user names a category in their own words ("travel", "coffee", "phone").
+    Rows: {category, code, accountType, postings}. Empty means the books have no such category —
+    which is a real answer, not a reason to go looking in supplier names.
+  params:
+    term:
+      type: string
+      description: "What the user called it, e.g. 'travel'. Matched case-insensitively anywhere in the account name."
+    limit:
+      type: int
+      default: 15
+      description: "Maximum matching accounts to return."
+  cypher: |
+    // Exists because a guessed account name fails silently. Live: a model asked for travel wrote
+    // `accountName = 'Travel'` against books that say 'Travel & Accommodation', got zero rows,
+    // reported "no recorded travel expenses" — and then went looking for the word 'fuel' in
+    // merchant names, which pulled a RESTAURANT called SEA FUEL into motor vehicle expenses.
+    // Resolving the name first removes the guess that starts that chain.
+    MATCH (a:LedgerAccount)
+    WHERE toLower(a.name) CONTAINS toLower($term) AND coalesce(a.header, false) = false
+    OPTIONAL MATCH (e:LedgerEntry)
+      WHERE e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
+    WITH a, count(e) AS postings
+    RETURN a.name AS category, a.code AS code, a.accountType AS accountType, postings
+    ORDER BY postings DESC, category ASC
+    LIMIT $limit
+
 - name: spend_by_category
   description: >-
     What was spent per expense account over a period, largest first. The answer to "where does
