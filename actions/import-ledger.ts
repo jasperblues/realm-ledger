@@ -347,7 +347,7 @@ async function writeLedger(ledger) {
     active: a.active,
     entity,
     source
-  }), "LedgerAccount");
+  }), "LedgerAccount", "accounts");
   const transactions = [...groupByRef(ledger).values()];
   await inBatches(transactions, (t) => ({
     key: `${source}:${entity}:${t.reference}`,
@@ -358,8 +358,8 @@ async function writeLedger(ledger) {
     counterparty: t.counterparty,
     entity,
     source
-  }), "LedgerTransaction");
-  const postings = await inBatches(postingRows(ledger), (r) => r, "LedgerEntry");
+  }), "LedgerTransaction", "transactions");
+  const postings = await inBatches(postingRows(ledger), (r) => r, "LedgerEntry", "postings");
   await gateway.repository.createEntries({
     type: "LedgerCoverage",
     rows: [{
@@ -439,15 +439,25 @@ function parseWriteCounts(summary) {
     updated: updated ? Number(updated[1]) : 0
   };
 }
-async function inBatches(items, toRow, type) {
+async function inBatches(items, toRow, type, label) {
   const total = { created: 0, updated: 0 };
-  for (const chunk of chunked(items, BATCH_SIZE)) {
+  const batches = chunked(items, BATCH_SIZE);
+  let done = 0;
+  for (const chunk of batches) {
     const summary = await gateway.repository.createEntries({ type, rows: chunk.map(toRow) });
     const counts = parseWriteCounts(summary);
     total.created += counts.created;
     total.updated += counts.updated;
+    done += chunk.length;
+    if (batches.length > 1) await report(`imported ${done} of ${items.length} ${label}`);
   }
   return total;
+}
+async function report(message) {
+  try {
+    await gateway.progress?.report({ message });
+  } catch {
+  }
 }
 var BATCH_SIZE = 200;
 function chunked(items, size) {

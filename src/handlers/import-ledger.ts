@@ -51,6 +51,13 @@ declare const gateway: {
      */
     createEntries(args: { type: string; rows: Record<string, unknown>[] }): Promise<string>;
   };
+  /**
+   * Optional: older assistants do not expose it. Never call it unguarded — this realm is cloned at
+   * `main` by whoever installs it, so it must keep working against a host that predates the tool.
+   */
+  progress?: {
+    report(args: { message: string }): Promise<string>;
+  };
 };
 
 export default async function importLedger(): Promise<string> {
@@ -116,7 +123,7 @@ async function writeLedger(ledger: Ledger): Promise<WriteCounts> {
     active: a.active,
     entity,
     source,
-  }), "LedgerAccount");
+  }), "LedgerAccount", "accounts");
 
   const transactions = [...groupByRef(ledger).values()];
   await inBatches(transactions, (t) => ({
@@ -128,9 +135,9 @@ async function writeLedger(ledger: Ledger): Promise<WriteCounts> {
     counterparty: t.counterparty,
     entity,
     source,
-  }), "LedgerTransaction");
+  }), "LedgerTransaction", "transactions");
 
-  const postings = await inBatches(postingRows(ledger), (r) => r, "LedgerEntry");
+  const postings = await inBatches(postingRows(ledger), (r) => r, "LedgerEntry", "postings");
 
   // Coverage last, so a record only exists for data that actually landed.
   await gateway.repository.createEntries({
@@ -259,15 +266,38 @@ async function inBatches<T>(
   items: T[],
   toRow: (item: T) => Record<string, unknown>,
   type: string,
+  label: string,
 ): Promise<WriteCounts> {
   const total: WriteCounts = { created: 0, updated: 0 };
-  for (const chunk of chunked(items, BATCH_SIZE)) {
+  const batches = chunked(items, BATCH_SIZE);
+  let done = 0;
+  for (const chunk of batches) {
     const summary = await gateway.repository.createEntries({ type, rows: chunk.map(toRow) });
     const counts = parseWriteCounts(summary);
     total.created += counts.created;
     total.updated += counts.updated;
+    done += chunk.length;
+    // AFTER the write, so "imported 1,200" means 1,200 are in the graph. Reporting on entry would
+    // claim work that has not happened — the same lie as counting parsed rows instead of written
+    // ones. Only worth saying when there is more than one batch: a single-batch import would just
+    // announce itself once, immediately before finishing.
+    if (batches.length > 1) await report(`imported ${done} of ${items.length} ${label}`);
   }
   return total;
+}
+
+/**
+ * Say how far along we are, if anyone is listening.
+ *
+ * Guarded twice over: the namespace is absent on assistants that predate it, and a failure to
+ * report must never fail an import that is otherwise going fine. Progress is decoration.
+ */
+async function report(message: string): Promise<void> {
+  try {
+    await gateway.progress?.report({ message });
+  } catch {
+    // Nobody to tell, or the channel has gone. The import continues either way.
+  }
 }
 
 const BATCH_SIZE = 200;

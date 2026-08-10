@@ -28,6 +28,7 @@ function setup(
   summariser: (w: Write) => string = allNew,
 ) {
   const writes: Write[] = [];
+  const reports: string[] = [];
   const reads: string[] = [];
 
   // Mirrors the host's SignalEnvelope: only wire fields are lifted, everything type-specific
@@ -64,9 +65,15 @@ function setup(
         return summariser(w);
       }),
     },
+    progress: {
+      report: vi.fn(async (a: { message: string }) => {
+        reports.push(a.message);
+        return "Reported.";
+      }),
+    },
   };
 
-  return { writes, reads };
+  return { writes, reads, reports };
 }
 
 /**
@@ -295,5 +302,68 @@ describe("what the import reports", () => {
     setup(file, "ledger.txt", () => "something the store did not used to say");
 
     expect(await runHandler()).not.toMatch(/Imported [1-9]/);
+  });
+});
+
+describe("progress while importing", () => {
+  /** Enough postings to need several batches — one batch reports nothing, by design. */
+  const manyPostings = (n: number) =>
+    [
+      "CDS1~Acme Pty Ltd~01/07/25~30/06/26",
+      "AC~6-4390~Staff Amenities",
+      ...Array.from({ length: n }, (_, i) => `TR~${i + 1}~01/02/26~6-4390~REF${i + 1}~10.00~~ITEM~`),
+    ].join("\n");
+
+  it("reports progress as batches land, ending at the total", async () => {
+    // The silence this closes: 2,340 postings took ~40 seconds with nothing said until the end.
+    const { reports } = setup(manyPostings(450));
+
+    await runHandler();
+
+    const postingReports = reports.filter((r) => r.endsWith("postings"));
+    expect(postingReports.length).toBeGreaterThan(1);
+    expect(postingReports[postingReports.length - 1]).toBe("imported 450 of 450 postings");
+  });
+
+  it("counts only upwards", async () => {
+    const { reports } = setup(manyPostings(450));
+
+    await runHandler();
+
+    const counts = reports
+      .filter((r) => r.endsWith("postings"))
+      .map((r) => Number(/imported (\d+) of/.exec(r)![1]));
+    expect(counts).toEqual([...counts].sort((a, b) => a - b));
+  });
+
+  it("says nothing when one batch does the job", async () => {
+    // A single-batch import would announce itself once, immediately before finishing — noise.
+    const { reports } = setup(manyPostings(3));
+
+    await runHandler();
+
+    expect(reports.filter((r) => r.endsWith("postings"))).toEqual([]);
+  });
+
+  it("imports fine against an assistant with no progress tool", async () => {
+    // This realm is cloned at main by whoever installs it, so it must keep working on a host that
+    // predates the tool. An unguarded call would fail the whole import.
+    setup(manyPostings(450));
+    delete (globalThis as any).gateway.progress;
+
+    const message = await runHandler();
+
+    expect(message).toContain("450");
+  });
+
+  it("a reporting failure does not fail the import", async () => {
+    setup(manyPostings(450));
+    (globalThis as any).gateway.progress.report = vi.fn(async () => {
+      throw new Error("channel gone");
+    });
+
+    const message = await runHandler();
+
+    expect(message).toContain("450");
   });
 });
