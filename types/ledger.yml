@@ -151,6 +151,37 @@
       description: "The company whose books this belongs to."
     source:
       description: "Adapter that produced it."
+  # FEW-SHOT for the text-to-cypher generator. Present because the label being VISIBLE in the schema
+  # turned out not to be enough: shown a ledger alongside the core billing shapes, the generator
+  # answered "what did I spend on travel" by filtering a Bill's title/currency/description for the
+  # word, and answered "list my travel items" by grepping FILENAMES. Both returned nothing and were
+  # reported as a spend of zero. These teach the PATTERN — the account is RESOLVED not matched, the
+  # credit convention is negated, the grain is the posting — with placeholder categories only.
+  examples:
+    - q: "what did I spend on <category>"
+      cypher: |
+        MATCH (e:LedgerEntry)
+        WHERE toLower(e.accountName) CONTAINS toLower('<category>') AND e.accountType = 'expense'
+        RETURN round(sum(-e.amount), 2) AS total, count(*) AS postings
+    - q: "list my <category> items, largest first"
+      cypher: |
+        MATCH (e:LedgerEntry)
+        WHERE toLower(e.accountName) CONTAINS toLower('<category>') AND e.accountType = 'expense'
+        RETURN e.date AS date, e.counterparty AS supplier, -e.amount AS amount
+        ORDER BY amount DESC LIMIT 200
+    - q: "break my <category> spend down by supplier"
+      cypher: |
+        MATCH (e:LedgerEntry)
+        WHERE toLower(e.accountName) CONTAINS toLower('<category>') AND e.accountType = 'expense'
+        RETURN coalesce(e.counterpartyKey, e.counterparty) AS supplier,
+               round(sum(-e.amount), 2) AS total, count(*) AS postings
+        ORDER BY total DESC LIMIT 200
+    - q: "who pays me, and how concentrated is it"
+      cypher: |
+        MATCH (e:LedgerEntry) WHERE e.accountType IN ['income', 'other-income']
+        RETURN coalesce(e.counterpartyKey, e.counterparty) AS client,
+               round(sum(-e.amount), 2) AS income, count(*) AS postings
+        ORDER BY income DESC LIMIT 200
 
 - name: LedgerCoverage
   description: >-
