@@ -182,7 +182,7 @@
     - q: "which spend categories do I have"
       cypher: |
         MATCH (a:LedgerAccount) WHERE a.accountType = 'expense'
-        RETURN a.name AS category ORDER BY category LIMIT 200
+        RETURN a.title AS category ORDER BY category LIMIT 200
     - q: "who pays me, and how concentrated is it"
       cypher: |
         MATCH (e:LedgerEntry) WHERE e.accountType IN ['income', 'other-income']
