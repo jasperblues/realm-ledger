@@ -18,7 +18,10 @@
 - name: LedgerAccount
   description: >-
     An account in the chart of accounts, as the source classifies it. The spine of every spend
-    and revenue question: an account is what turns a payment into a category.
+    and revenue question: an account is what turns a payment into a category. A user's words are
+    RESOLVED against these names, never assumed to match one — and when nothing matches, return
+    these names rather than a total of zero, which reads as "you spent nothing" instead of "no
+    such category".
   properties:
     key:
       description: >-
@@ -176,6 +179,10 @@
         RETURN coalesce(e.counterpartyKey, e.counterparty) AS supplier,
                round(sum(-e.amount), 2) AS total, count(*) AS postings
         ORDER BY total DESC LIMIT 200
+    - q: "which spend categories do I have"
+      cypher: |
+        MATCH (a:LedgerAccount) WHERE a.accountType = 'expense'
+        RETURN a.name AS category ORDER BY category LIMIT 200
     - q: "who pays me, and how concentrated is it"
       cypher: |
         MATCH (e:LedgerEntry) WHERE e.accountType IN ['income', 'other-income']
