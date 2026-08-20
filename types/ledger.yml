@@ -112,11 +112,14 @@
         spend as a negative number.
     date:
       description: >-
-        Posting date, ISO yyyy-mm-dd. Denormalised from the transaction so a period filter needs no
-        join. Being ISO it compares LEXICALLY — `e.date >= '2025-07-01' AND e.date <= '2026-06-30'` —
-        with no date()/datetime() coercion. Coercing it invites expressions like
-        `date(datetime()).year - 1 + '-01-01'`, which is integer arithmetic concatenated to a string:
-        it does not error, it silently matches nothing.
+        Posting date, ISO yyyy-mm-dd, stored as a STRING. Denormalised from the transaction so a
+        period filter needs no join, and being ISO it compares LEXICALLY:
+        `e.date >= '2025-07-01' AND e.date <= '2026-06-30'`.
+        BOTH SIDES STAY STRINGS. Never wrap the property in date()/datetime(), and never wrap the
+        literal either — `e.date >= date('2025-09-01')` compares a string to a Date and matches
+        NOTHING, exactly like `date(datetime()).year - 1 + '-01-01'`, which is integer arithmetic
+        concatenated to a string. Neither errors; both silently return zero rows for a category that
+        has postings.
     accountCode:
       description: >-
         The account posted to. Joined to LedgerAccount by code, together with entity and source —
