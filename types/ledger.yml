@@ -168,6 +168,14 @@
         MATCH (e:LedgerEntry)
         WHERE toLower(e.accountName) CONTAINS toLower('<category>') AND e.accountType = 'expense'
         RETURN round(sum(e.amount), 2) AS total, count(*) AS postings
+    - q: "what did I spend in total"
+      cypher: |
+        MATCH (e:LedgerEntry) WHERE e.accountType = 'expense'
+        RETURN round(sum(e.amount), 2) AS total, count(*) AS postings
+    - q: "what was my total income"
+      cypher: |
+        MATCH (e:LedgerEntry) WHERE e.accountType IN ['income', 'other-income']
+        RETURN round(sum(-e.amount), 2) AS total, count(*) AS postings
     - q: "list my <category> items, largest first"
       cypher: |
         MATCH (e:LedgerEntry)
