@@ -209,17 +209,22 @@
     # Only accountType names the leg that IS the income. It is also stable across however the money
     # arrives: a direct transfer, a billing provider or a card settlement changes which ASSET account
     # takes the debit and leaves the income leg untouched.
+    #
+    # FILTER on `counterparty`, GROUP by `counterpartyKey`. The key is a normalised slug —
+    # 'CENTURYFOAMANDRUBBER' for "Century Foam And Rubber" — so it collapses narration variants but
+    # contains no spaces: a CONTAINS against it matches a single word by luck and every multi-word
+    # name never. The narration is what a person types.
     - q: "how much did I earn from acme"
       cypher: |
         MATCH (e:LedgerEntry)
         WHERE e.accountType IN ['income', 'other-income']
-          AND toLower(coalesce(e.counterpartyKey, e.counterparty)) CONTAINS 'acme'
+          AND toLower(e.counterparty) CONTAINS 'acme'
         RETURN round(sum(-e.amount), 2) AS income, count(*) AS postings
     - q: "how much did I pay acme"
       cypher: |
         MATCH (e:LedgerEntry)
         WHERE e.accountType = 'expense'
-          AND toLower(coalesce(e.counterpartyKey, e.counterparty)) CONTAINS 'acme'
+          AND toLower(e.counterparty) CONTAINS 'acme'
         RETURN round(sum(e.amount), 2) AS paid, count(*) AS postings
     - q: "who is my biggest client"
       cypher: |
