@@ -197,6 +197,23 @@
         RETURN coalesce(e.counterpartyKey, e.counterparty) AS supplier,
                round(sum(e.amount), 2) AS total, count(*) AS postings
         ORDER BY total DESC LIMIT 200
+    # ONE NAMED counterparty, both directions. Without these the generator infers direction from the
+    # SIGN — `WHERE e.counterparty CONTAINS 'X' AND e.amount > 0` — which is backwards: income is a
+    # CREDIT and stored negative, so that sums the debit legs and reports a client's payments to you
+    # as whatever you paid them. A counterparty usually appears on BOTH sides of the books, so the
+    # accountType filter is what separates "earned from"ic from "paid to".
+    - q: "how much did I earn from acme"
+      cypher: |
+        MATCH (e:LedgerEntry)
+        WHERE e.accountType IN ['income', 'other-income']
+          AND toLower(coalesce(e.counterpartyKey, e.counterparty)) CONTAINS 'acme'
+        RETURN round(sum(-e.amount), 2) AS income, count(*) AS postings
+    - q: "how much did I pay acme"
+      cypher: |
+        MATCH (e:LedgerEntry)
+        WHERE e.accountType = 'expense'
+          AND toLower(coalesce(e.counterpartyKey, e.counterparty)) CONTAINS 'acme'
+        RETURN round(sum(e.amount), 2) AS paid, count(*) AS postings
     - q: "who is my biggest client"
       cypher: |
         MATCH (e:LedgerEntry) WHERE e.accountType IN ['income', 'other-income']
