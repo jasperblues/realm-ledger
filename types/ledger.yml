@@ -244,6 +244,20 @@
           AND toLower(e.accountName) CONTAINS 'travel'
           AND e.date >= '2025-07-01' AND e.date <= '2026-06-30'
         RETURN round(sum(e.amount), 2) AS total, count(*) AS postings
+    # A RELATIVE period is scoped to what the ledger HOLDS, not to a window computed from the clock.
+    # Observed on a real ledger covering 2025-07-01..2026-06-30: asked for "last financial year" the
+    # generator computed 2023-07-01..2024-06-30 — two years out — compared it against the real
+    # coverage, and told the user their data did not cover the period they asked for. Joining to the
+    # coverage answers from the period actually imported and cannot be wrong by arithmetic.
+    - q: "what did I spend on travel last financial year"
+      cypher: |
+        MATCH (c:LedgerCoverage)
+        WITH c.fromDate AS periodFrom, c.toDate AS periodTo
+        MATCH (e:LedgerEntry)
+        WHERE e.accountType = 'expense'
+          AND toLower(e.accountName) CONTAINS 'travel'
+          AND e.date >= periodFrom AND e.date <= periodTo
+        RETURN periodFrom, periodTo, round(sum(e.amount), 2) AS total, count(*) AS postings
     - q: "what did I spend on travel in September 2025"
       cypher: |
         MATCH (e:LedgerEntry)
