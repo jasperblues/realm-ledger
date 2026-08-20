@@ -107,7 +107,9 @@
       description: >-
         Signed, in the books' own currency and the source's own convention: positive debit,
         negative credit. Never rounded or absolute-valued on import — the sign is what makes
-        income and expenditure distinguishable.
+        income and expenditure distinguishable. So an EXPENSE total is `sum(e.amount)` and already
+        reads positive, while an INCOME total is `-sum(e.amount)`. Negating an expense reports every
+        spend as a negative number.
     date:
       description: "Posting date, ISO yyyy-mm-dd. Denormalised from the transaction for filtering."
     accountCode:
@@ -165,19 +167,19 @@
       cypher: |
         MATCH (e:LedgerEntry)
         WHERE toLower(e.accountName) CONTAINS toLower('<category>') AND e.accountType = 'expense'
-        RETURN round(sum(-e.amount), 2) AS total, count(*) AS postings
+        RETURN round(sum(e.amount), 2) AS total, count(*) AS postings
     - q: "list my <category> items, largest first"
       cypher: |
         MATCH (e:LedgerEntry)
         WHERE toLower(e.accountName) CONTAINS toLower('<category>') AND e.accountType = 'expense'
-        RETURN e.date AS date, e.counterparty AS supplier, -e.amount AS amount
+        RETURN e.date AS date, e.counterparty AS supplier, e.amount AS amount
         ORDER BY amount DESC LIMIT 200
     - q: "break my <category> spend down by supplier"
       cypher: |
         MATCH (e:LedgerEntry)
         WHERE toLower(e.accountName) CONTAINS toLower('<category>') AND e.accountType = 'expense'
         RETURN coalesce(e.counterpartyKey, e.counterparty) AS supplier,
-               round(sum(-e.amount), 2) AS total, count(*) AS postings
+               round(sum(e.amount), 2) AS total, count(*) AS postings
         ORDER BY total DESC LIMIT 200
     - q: "which spend categories do I have"
       cypher: |
