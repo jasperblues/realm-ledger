@@ -17,6 +17,22 @@ what you can do, then find out what is actually there with `ledger_coverage`.
 
 ## Use the views
 
+**Run them with `view_run`, naming the view.** Call `view_run` with NO arguments first and it
+lists every view with its parameters, which is also how to check a name before using it.
+
+```
+view_run                                    // lists them
+view_run { name: "ledger_coverage" }
+view_run { name: "spend_by_category", from: "2025-07-01", to: "2026-06-30" }
+```
+
+**There is no `gateway.<something>.<view>()`.** A view is not a gateway namespace, and
+`ledger-analysis` is the name of THIS SKILL, not of a callable thing. Observed, on a world whose
+ledger had imported cleanly: a model wrote `await gateway.ledger_analysis.ledger_coverage()`, got
+`gateway.ledger_analysis is not a world tool`, and reported to the user that their books had no
+coverage periods — turning a failed call into a finding about their data. The table below names
+the views; this is how they are reached, and the two belong together.
+
 Run them by name rather than writing the Cypher yourself. The aggregation is done once, inside
 the view, precisely so it cannot be fanned out and over-counted: join a posting to its
 transaction and then to a counterparty by hand, and every posting multiplies.
@@ -108,6 +124,14 @@ is the raw text it was read from, which is how you show which spellings were mer
 8. **Don't offer tax or compliance opinions.** You can report what the books say — totals,
    concentration, trends. Whether that satisfies a rule is for their accountant, and a
    confident wrong answer here is expensive.
+
+9. **A call that failed is not a finding.** "The query errored" and "your books have no data for
+   that period" are different sentences, and only one of them is about the user's business. If a
+   view will not run, say the call failed and what it said — the error names what is available and
+   is usually enough to get it right on the retry. Observed: a script error reading
+   `gateway.ledger_analysis is not a world tool` was reported to the user as their ledger having
+   no coverage periods, on a world that had just imported 2,340 postings covering a full year.
+   An absence reported as fact sends somebody looking for records that were never missing.
 
 ## Worked shape
 
