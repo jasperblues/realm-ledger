@@ -26,6 +26,19 @@ view_run { name: "ledger_coverage" }
 view_run { name: "spend_by_category", from: "2025-07-01", to: "2026-06-30" }
 ```
 
+**Inside a script it is `gateway.view.run(...)`, not `gateway.view_run(...)`.** A tool named
+`x_y` is reached as `gateway.x.y` in `execute_javascript` — the same way `kg_query` is
+`gateway.kg.query`. Observed: a correct aggregation script failed twice on
+`gateway.view_run is not a world tool`, and the model then added 65 postings up by hand in prose
+and got a total that did not match the one it had quoted a line earlier.
+
+```js
+const result = await gateway.view.run({
+  name: 'spend_by_supplier_in_category',
+  params: JSON.stringify({ category: 'Staff Amenities', from, to }),
+});
+```
+
 **There is no `gateway.<something>.<view>()`.** A view is not a gateway namespace, and
 `ledger-analysis` is the name of THIS SKILL, not of a callable thing. Observed, on a world whose
 ledger had imported cleanly: a model wrote `await gateway.ledger_analysis.ledger_coverage()`, got
@@ -45,11 +58,18 @@ ISO `yyyy-mm-dd` and inclusive.
 |---|---|---|
 | where does the money go | `spend_by_category` | `from`, `to`, `limit`(25) |
 | what makes up that total | `spend_in_category` | **`category`** (required), `from`, `to`, `limit`(200) |
+| break a category down by supplier | `spend_by_supplier_in_category` | **`category`** (required), `from`, `to`, `limit`(50) |
 | who pays us, and how concentrated is it | `revenue_by_client` | `from`, `to`, `limit`(25) |
 | is this category growing | `category_trend` | **`category`** (required), `from`, `to` |
 | who do we transact with most | `top_counterparties` | `from`, `to`, `limit`(25) |
 | what periods do we actually have | `ledger_coverage` | none |
 | the user named a category in their own words | `find_category` FIRST, then the view above | **`term`** (not `name`), `limit`(15) |
+
+**Never add up rows yourself.** `spend_in_category` returns individual postings; totalling them
+in prose is arithmetic over dozens of numbers with nothing checking it, and it has produced a
+breakdown that disagreed with its own stated total. If a question asks for a total or a grouping,
+there is a view that has already done it — and if the answer must be computed, compute it in a
+script, never in the reply.
 
 `category` takes the account name `find_category` returned, not the user's word for it. That is
 the whole reason to call `find_category` first: books that say "Travel & Accommodation" will not

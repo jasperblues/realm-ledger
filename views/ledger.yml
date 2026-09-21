@@ -102,6 +102,45 @@
     ORDER BY date DESC, amount DESC
     LIMIT $limit
 
+- name: spend_by_supplier_in_category
+  description: >-
+    One category's spend GROUPED BY the party it went to, already totalled — who the money in
+    this category actually went to, and how many postings each. Rows: {counterparty, total,
+    postings}. Use this for "break that down by supplier"; `spend_in_category` returns the
+    individual postings and leaves the adding up to you, which is where it goes wrong.
+  params:
+    category:
+      type: string
+      description: "Account name or fragment, e.g. 'staff amenities'. Case-insensitive."
+    from:
+      type: string
+      description: "Start date, ISO yyyy-mm-dd, inclusive."
+    to:
+      type: string
+      description: "End date, ISO yyyy-mm-dd, inclusive."
+    limit:
+      type: int
+      default: 50
+      description: "Maximum suppliers to return, largest first."
+  cypher: |
+    // NO JOIN, deliberately. `accountName` and `counterparty` are both ON the posting, so this
+    // groups without traversing — and a join to the account or the transaction would multiply
+    // postings and inflate every total silently. The skill says this; this view is where it is
+    // enforced rather than remembered.
+    //
+    // Exists because the aggregation had nowhere to happen. Asked to break a category down by
+    // supplier, a model called `spend_in_category`, got 65 individual postings, and added them
+    // up itself: it reported 3,499.32 across 67 postings against a true 3,629.47 across 65 —
+    // a table that did not even reconcile with the total it quoted one line above.
+    MATCH (e:LedgerEntry)
+    WHERE toLower(e.accountName) CONTAINS toLower($category)
+      AND e.date >= $from AND e.date <= $to
+    RETURN coalesce(e.counterparty, 'Unknown') AS counterparty,
+           round(sum(e.amount), 2) AS total,
+           count(e) AS postings
+    ORDER BY total DESC
+    LIMIT $limit
+
 - name: revenue_by_client
   description: >-
     Income per counterparty over a period, largest first, with each client's share of the total.
