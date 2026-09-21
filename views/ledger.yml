@@ -48,7 +48,7 @@
 - name: spend_by_category
   description: >-
     What was spent per expense account over a period, largest first. The answer to "where does
-    the money go". Rows: {category, code, total, transactions}.
+    the money go". Rows: {category, code, total, postings}.
   params:
     from:
       type: string
@@ -65,9 +65,13 @@
     WHERE e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
       AND a.accountType IN ['expense', 'cost-of-sales', 'other-expense']
       AND e.date >= $from AND e.date <= $to
-    WITH a, sum(e.amount) AS total, count(DISTINCT e.key) AS transactions
+    // POSTINGS, not transactions: this counts LedgerEntry keys, and one transaction holds
+    // several postings. It was called `transactions` while every other view called the same
+    // thing `postings` — so a script that read `.postings` off these rows got undefined, printed
+    // "3629.47 across undefined postings", and the model discarded a correct total as a failure.
+    WITH a, sum(e.amount) AS total, count(DISTINCT e.key) AS postings
     WHERE total <> 0
-    RETURN a.title AS category, a.code AS code, total, transactions
+    RETURN a.title AS category, a.code AS code, total, postings
     ORDER BY total DESC, category ASC
     LIMIT $limit
 
@@ -186,7 +190,7 @@
 - name: category_trend
   description: >-
     One expense category month by month, to see whether it is growing. Rows: {month, total,
-    transactions}.
+    postings}.
   params:
     category:
       type: string
@@ -202,8 +206,9 @@
     WHERE e.accountCode = a.code AND e.entity = a.entity AND e.source = a.source
       AND toLower(a.title) CONTAINS toLower($category)
       AND e.date >= $from AND e.date <= $to
-    WITH substring(e.date, 0, 7) AS month, sum(e.amount) AS total, count(e) AS transactions
-    RETURN month, total, transactions
+    // POSTINGS: this counts LedgerEntry, and a transaction holds several of them.
+    WITH substring(e.date, 0, 7) AS month, sum(e.amount) AS total, count(e) AS postings
+    RETURN month, total, postings
     ORDER BY month ASC
 
 - name: ledger_coverage

@@ -54,16 +54,21 @@ transaction and then to a counterparty by hand, and every posting multiplies.
 does not declare, so `find_category { name: … }` fails outright — its parameter is `term`. Dates are
 ISO `yyyy-mm-dd` and inclusive.
 
-| Question | View | Parameters |
-|---|---|---|
-| where does the money go | `spend_by_category` | `from`, `to`, `limit`(25) |
-| what makes up that total | `spend_in_category` | **`category`** (required), `from`, `to`, `limit`(200) |
-| break a category down by supplier | `spend_by_supplier_in_category` | **`category`** (required), `from`, `to`, `limit`(50) |
-| who pays us, and how concentrated is it | `revenue_by_client` | `from`, `to`, `limit`(25) |
-| is this category growing | `category_trend` | **`category`** (required), `from`, `to` |
-| who do we transact with most | `top_counterparties` | `from`, `to`, `limit`(25) |
-| what periods do we actually have | `ledger_coverage` | none |
-| the user named a category in their own words | `find_category` FIRST, then the view above | **`term`** (not `name`), `limit`(15) |
+| Question | View | Parameters | Rows come back as |
+|---|---|---|---|
+| where does the money go | `spend_by_category` | `from`, `to`, `limit`(25) | `category`, `code`, `total`, `postings` |
+| what makes up that total | `spend_in_category` | **`category`** (required), `from`, `to`, `limit`(200) | `date`, `amount`, `narration`, `counterparty` |
+| break a category down by supplier | `spend_by_supplier_in_category` | **`category`** (required), `from`, `to`, `limit`(50) | `counterparty`, `total`, `postings` |
+| who pays us, and how concentrated is it | `revenue_by_client` | `from`, `to`, `limit`(25) | `client`, `total`, `share`, `transactions` |
+| is this category growing | `category_trend` | **`category`** (required), `from`, `to` | `month`, `total`, `postings` |
+| who do we transact with most | `top_counterparties` | `from`, `to`, `limit`(25) | `counterparty`, `spent`, `received`, `transactions` |
+| what periods do we actually have | `ledger_coverage` | none | `entity`, `from`, `to`, `source`, `lines`, `rejected`, `importedAt` |
+| the user named a category in their own words | `find_category` FIRST, then the view above | **`term`** (not `name`), `limit`(15) | `category`, `code`, `accountType`, `postings` |
+
+**The field names are here too.** Reading a field a row does not have yields `undefined`, and a
+sentence built around it — "3629.47 across undefined postings" — has been read back as a failed
+query and a correct total thrown away. `postings` counts postings; `transactions` appears only
+where a view genuinely counts transactions.
 
 **Never add up rows yourself.** `spend_in_category` returns individual postings; totalling them
 in prose is arithmetic over dozens of numbers with nothing checking it, and it has produced a
@@ -158,7 +163,13 @@ is the raw text it was read from, which is how you show which spellings were mer
    concentration, trends. Whether that satisfies a rule is for their accountant, and a
    confident wrong answer here is expensive.
 
-9. **A call that failed is not a finding.** "The query errored" and "your books have no data for
+9. **A PARTIAL result is not a failure.** Report the part you have and name the part you do not.
+   Observed: a script returned "3629.47 across undefined postings" — the total was right, one
+   field name was wrong — and the whole answer was discarded as a failed query. The user got
+   nothing, when they could have had the figure and a note that the posting count was unreadable.
+   Saying "I could not retrieve that" about data you are holding is its own kind of wrong.
+
+10. **A call that failed is not a finding.** "The query errored" and "your books have no data for
    that period" are different sentences, and only one of them is about the user's business. If a
    view will not run, say the call failed and what it said — the error names what is available and
    is usually enough to get it right on the retry. Observed: a script error reading
