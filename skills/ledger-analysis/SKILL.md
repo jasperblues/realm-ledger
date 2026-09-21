@@ -37,15 +37,28 @@ Run them by name rather than writing the Cypher yourself. The aggregation is don
 the view, precisely so it cannot be fanned out and over-counted: join a posting to its
 transaction and then to a counterparty by hand, and every posting multiplies.
 
-| Question | View |
-|---|---|
-| where does the money go | `spend_by_category` |
-| what makes up that total | `spend_in_category` |
-| who pays us, and how concentrated is it | `revenue_by_client` |
-| is this category growing | `category_trend` |
-| who do we transact with most | `top_counterparties` |
-| what periods do we actually have | `ledger_coverage` |
-| the user named a category in their own words | `find_category` FIRST, then the view above |
+**The parameter names are here because they are not guessable.** A view refuses an argument it
+does not declare, so `find_category { name: … }` fails outright — its parameter is `term`. Dates are
+ISO `yyyy-mm-dd` and inclusive.
+
+| Question | View | Parameters |
+|---|---|---|
+| where does the money go | `spend_by_category` | `from`, `to`, `limit`(25) |
+| what makes up that total | `spend_in_category` | **`category`** (required), `from`, `to`, `limit`(200) |
+| who pays us, and how concentrated is it | `revenue_by_client` | `from`, `to`, `limit`(25) |
+| is this category growing | `category_trend` | **`category`** (required), `from`, `to` |
+| who do we transact with most | `top_counterparties` | `from`, `to`, `limit`(25) |
+| what periods do we actually have | `ledger_coverage` | none |
+| the user named a category in their own words | `find_category` FIRST, then the view above | **`term`** (not `name`), `limit`(15) |
+
+`category` takes the account name `find_category` returned, not the user's word for it. That is
+the whole reason to call `find_category` first: books that say "Travel & Accommodation" will not
+match "Travel", and a guessed name returns zero rows that read exactly like zero spend.
+
+**A refused call tells you how to fix it.** `view_run` names the declared parameters in its error
+— "unknown param(s) 'name' — declared params: term, limit". Read it and retry with the right ones;
+do not fall back to hand-written Cypher, and do not report the failure as a finding about the
+user's books. `view_run` with no arguments lists every view and its parameters if you need them.
 
 ## Aggregating
 
