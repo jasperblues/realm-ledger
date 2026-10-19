@@ -5,7 +5,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "tsc -p tsconfig.build.json && npm run bundle",
+    "compile": "tsc -p tsconfig.build.json && npm run bundle",
     "bundle": "esbuild src/handlers/import-ledger.entry.ts --bundle --format=esm --platform=neutral --outfile=actions/import-ledger.ts --log-level=warning"
   },
   "devDependencies": {

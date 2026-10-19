@@ -1,7 +1,7 @@
 # Wakes when a file is attached to a conversation and imports it if it is a ledger export.
 #
 # `module:` names a BUNDLED file, not the handler source. The spec loader inlines exactly one
-# file, so a handler cannot import its own parser at runtime; `npm run build` bundles
+# file, so a handler cannot import its own parser at runtime; `npm run compile` bundles
 # `src/handlers/import-ledger.ts` and everything it imports into `actions/import-ledger.ts`.
 # The parser therefore stays in `src/parse`, where it is tested, rather than being copied here.
 #

@@ -12,7 +12,7 @@ import type { Ledger, ParseResult } from "../parse/model";
  *
  * Bundled from source at build time: the spec loader inlines exactly ONE file, so a handler
  * cannot import its own parser at runtime. The parser stays in `src/parse` where it is tested,
- * and `npm run build` bundles this entry point into `actions/import-ledger.ts`.
+ * and `npm run compile` bundles this entry point into `actions/import-ledger.ts`.
  */
 
 /**
