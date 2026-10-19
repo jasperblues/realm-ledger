@@ -9,7 +9,7 @@ import { resolve } from "path";
  * `actions/import-ledger.ts` is a build artifact that has to be committed: the host clones the
  * realm and the spec loader inlines that exact file, so it must be present in the repository
  * rather than produced later. That makes it the one file here that can silently go stale — edit
- * the handler or the parser, forget `npm run build`, and the realm ships behaviour that no test
+ * the handler or the parser, forget `npm run compile`, and the realm ships behaviour that no test
  * covers, because every other test exercises the source.
  *
  * This rebuilds in memory and compares. It fails loudly rather than letting a stale artifact
@@ -33,7 +33,7 @@ describe("committed bundle", () => {
 
     expect(
       rebuilt === committed,
-      "actions/import-ledger.ts is stale — run `npm run build` and commit the result",
+      "actions/import-ledger.ts is stale — run `npm run compile` and commit the result",
     ).toBe(true);
   });
 });

@@ -6,7 +6,7 @@
     "declaration": false,
     "noEmit": false,
     // ESM, matching the esbuild bundle (--format=esm). CommonJS here rejected the
-    // top-level await in the entry point, so `npm run build` failed and the bundle had to be
+    // top-level await in the entry point, so `npm run compile` failed and the bundle had to be
     // produced by running `npm run bundle` directly — which skips typechecking entirely.
     "module": "ES2022",
     "moduleResolution": "Bundler",
